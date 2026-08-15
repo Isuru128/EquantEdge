@@ -1,0 +1,22 @@
+# Copy this file to config.yaml and fill in your own values.
+# NEVER commit config.yaml if you put real login credentials in it.
+
+mt5:
+  # Leave login/password/server blank to use the account already
+  # logged into the running MT5 terminal instead.
+  login: null
+  password: null
+  server: null
+
+trading:
+  symbol: "EURUSD"
+  timeframe: "M15"          # M1, M5, M15, M30, H1, H4, D1
+  num_candles: 500
+
+risk:
+  risk_per_trade_pct: 1.0   # % of account equity risked per trade
+  max_daily_loss_pct: 3.0   # stop trading for the day past this loss
+  max_open_positions: 1
+
+mode: "demo"                 # "demo" or "live" — script should refuse
+                              # to run "live" without an explicit override
