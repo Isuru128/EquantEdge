@@ -1,4 +1,4 @@
-# MT5 Price Action Trading Bot
+# EquantPilot
 
 Automated forex trading tool that connects to a MetaTrader 5 account,
 detects price-action candlestick patterns, and executes trades based on
@@ -11,7 +11,7 @@ Always test on a demo account first.
 ## Project structure
 
 ```
-mt5-price-action-bot/
+EquantPilot/
 ├── src/
 │   ├── connect.py          # MT5 terminal connection + data pull
 │   ├── patterns.py         # Candlestick pattern detection logic
@@ -35,7 +35,7 @@ mt5-price-action-bot/
 3. Clone this repo and install dependencies:
    ```bash
    git clone <your-repo-url>
-   cd mt5-price-action-bot
+   cd EquantPilot
    python -m venv venv
    venv\Scripts\activate        # Windows
    pip install -r requirements.txt
