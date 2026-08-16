@@ -13,6 +13,7 @@ venv/
 data/*.csv
 logs/*.log
 *.log
+*.csv
 
 # Jupyter
 .ipynb_checkpoints/
