@@ -30,8 +30,7 @@ NUM_CANDLES = 500               # how many bars of history to pull
 LOGIN = None          # e.g. 12345678
 PASSWORD = None        # e.g. "your_password"
 SERVER = None          # e.g. "YourBroker-Demo"
-
-
+ 
 def connect():
     """Initialize connection to the local MT5 terminal."""
     if not mt5.initialize():
