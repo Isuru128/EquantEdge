@@ -14,9 +14,16 @@ Usage example:
     from src.execution import place_order, close_position, DRY_RUN
 """
 
+import os
+import sys
 import MetaTrader5 as mt5
 from datetime import datetime
-from .risk import calculate_lot_size
+
+if __package__ is None or __package__ == "":
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from src.risk import calculate_lot_size
+else:
+    from .risk import calculate_lot_size
 
 # ── Set to False when you are ready to trade real money on a demo account ──
 DRY_RUN: bool = True
@@ -27,14 +34,28 @@ PIP_DIGITS = {
     "default": 4,
     # pairs where 1 pip = 0.01 (JPY pairs)
     "JPY": 2,
+    # Gold / Silver spot: quoted to 2 decimal places (1 pip = 0.01)
+    "XAU": 2,
+    "XAG": 2,
 }
 
 _log_prefix = lambda: f"[{datetime.now().strftime('%H:%M:%S')}][{'DRY' if DRY_RUN else 'LIVE'}]"
 
 
 def _pip_size(symbol: str) -> float:
-    """Return pip size for a symbol (0.0001 for most pairs, 0.01 for JPY)."""
-    digits = PIP_DIGITS["JPY"] if "JPY" in symbol.upper() else PIP_DIGITS["default"]
+    """Return pip size for a symbol.
+
+    * Metals (XAU, XAG)  → 0.01  (2 decimal places)
+    * JPY pairs          → 0.01  (2 decimal places)
+    * All other pairs    → 0.0001 (4 decimal places)
+    """
+    sym = symbol.upper()
+    if "XAU" in sym or "XAG" in sym:
+        digits = PIP_DIGITS["XAU"]
+    elif "JPY" in sym:
+        digits = PIP_DIGITS["JPY"]
+    else:
+        digits = PIP_DIGITS["default"]
     return 10 ** -digits
 
 
