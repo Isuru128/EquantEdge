@@ -14,6 +14,7 @@ Usage example:
     from src.execution import place_order, close_position, DRY_RUN
 """
 
+import math
 import os
 import sys
 import MetaTrader5 as mt5
@@ -25,8 +26,14 @@ if __package__ is None or __package__ == "":
 else:
     from .risk import calculate_lot_size
 
-# ── Set to False when you are ready to trade real money on a demo account ──
-DRY_RUN: bool = True
+# ── Live execution mode (False = Send real orders to MT5 demo) ───────────────
+DRY_RUN: bool = False
+
+
+def set_dry_run(enable: bool) -> None:
+    """Dynamically enable or disable dry-run mode."""
+    global DRY_RUN
+    DRY_RUN = enable
 # ───────────────────────────────────────────────────────────────────────────
 
 PIP_DIGITS = {
@@ -128,6 +135,28 @@ def place_order(
         lot_step        = info.volume_step,
     )
 
+    # ── Margin Check & Auto-Clamping ──────────────────────────────────────────
+    acc_info = mt5.account_info()
+    free_margin = acc_info.margin_free if acc_info else account_balance
+    margin_req = mt5.order_calc_margin(order_type, symbol, lot_size, price)
+
+    if margin_req is not None and margin_req > (free_margin * 0.95):
+        margin_min = mt5.order_calc_margin(order_type, symbol, info.volume_min, price)
+        if margin_min and free_margin < margin_min:
+            print(
+                f"{_log_prefix()} ERROR: Insufficient free margin (${free_margin:.2f}) "
+                f"to open minimum lot {info.volume_min} (${margin_min:.2f} required)."
+            )
+            return None
+        margin_per_step = mt5.order_calc_margin(order_type, symbol, info.volume_step, price) or 1.0
+        max_possible_lots = math.floor((free_margin * 0.90) / margin_per_step) * info.volume_step
+        clamped_lots = round(max(info.volume_min, min(max_possible_lots, info.volume_max)), 2)
+        print(
+            f"{_log_prefix()} Margin safety: Requested {lot_size} lots (${margin_req:.2f} margin) "
+            f"exceeds free margin (${free_margin:.2f}). Adjusted to {clamped_lots} lots."
+        )
+        lot_size = clamped_lots
+
     direction = "BUY " if signal == 1 else "SELL"
     print(
         f"{_log_prefix()} {direction} {symbol}  "
@@ -137,6 +166,15 @@ def place_order(
     if DRY_RUN:
         print(f"{_log_prefix()} DRY RUN — order NOT sent.")
         return -1   # sentinel for dry-run "success"
+
+    # Determine broker filling mode
+    filling_mode = mt5.ORDER_FILLING_IOC
+    if info.filling_mode & mt5.ORDER_FILLING_IOC:
+        filling_mode = mt5.ORDER_FILLING_IOC
+    elif info.filling_mode & mt5.ORDER_FILLING_RETURN:
+        filling_mode = mt5.ORDER_FILLING_RETURN
+    elif info.filling_mode & mt5.ORDER_FILLING_FOK:
+        filling_mode = mt5.ORDER_FILLING_FOK
 
     request = {
         "action":     mt5.TRADE_ACTION_DEAL,
@@ -150,7 +188,7 @@ def place_order(
         "magic":      20260816,     # unique EA identifier
         "comment":    comment,
         "type_time":  mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
+        "type_filling": filling_mode,
     }
 
     result = mt5.order_send(request)
@@ -191,6 +229,16 @@ def close_position(ticket: int, symbol: str, comment: str = "EquantEdge close") 
     close_type  = mt5.ORDER_TYPE_SELL if pos.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
     close_price = tick.bid if pos.type == mt5.ORDER_TYPE_BUY else tick.ask
 
+    # Determine broker filling mode
+    info = _symbol_info(symbol)
+    filling_mode = mt5.ORDER_FILLING_IOC
+    if info.filling_mode & mt5.ORDER_FILLING_IOC:
+        filling_mode = mt5.ORDER_FILLING_IOC
+    elif info.filling_mode & mt5.ORDER_FILLING_RETURN:
+        filling_mode = mt5.ORDER_FILLING_RETURN
+    elif info.filling_mode & mt5.ORDER_FILLING_FOK:
+        filling_mode = mt5.ORDER_FILLING_FOK
+
     request = {
         "action":     mt5.TRADE_ACTION_DEAL,
         "symbol":     symbol,
@@ -202,7 +250,7 @@ def close_position(ticket: int, symbol: str, comment: str = "EquantEdge close") 
         "magic":      20260816,
         "comment":    comment,
         "type_time":  mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
+        "type_filling": filling_mode,
     }
 
     result = mt5.order_send(request)
