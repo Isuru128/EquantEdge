@@ -21,7 +21,7 @@ import sys
 import math
 import os
 import threading
-from datetime import datetime, time as dt_time, timedelta
+from datetime import datetime, time as dt_time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import tkinter as tk
@@ -149,24 +149,35 @@ def get_active_session_info() -> dict:
     }
 
 
-def classify_trade_session(trade_time_dt: datetime) -> str:
-    """Given a UTC or local datetime of a trade, classify into one of the 3 NY sessions."""
+def classify_trade_session(trade_time) -> str:
+    """
+    Accurately classify any trade timestamp (epoch, naive local, or UTC) into
+    one of the 3 configured New York trading sessions.
+    """
     try:
-        if trade_time_dt.tzinfo is None:
-            # Assume local system time if naive, convert to NY
-            trade_dt_ny = trade_time_dt.astimezone(NY_TZ)
+        if isinstance(trade_time, (int, float)):
+            dt_ny = datetime.fromtimestamp(trade_time, tz=timezone.utc).astimezone(NY_TZ)
+        elif isinstance(trade_time, (datetime, pd.Timestamp)):
+            if trade_time.tzinfo is None:
+                dt_ny = trade_time.replace(tzinfo=timezone.utc).astimezone(NY_TZ)
+            else:
+                dt_ny = trade_time.astimezone(NY_TZ)
         else:
-            trade_dt_ny = trade_time_dt.astimezone(NY_TZ)
+            return "Outside Sessions"
     except Exception:
-        trade_dt_ny = trade_time_dt
+        return "Outside Sessions"
 
-    mins = trade_dt_ny.hour * 60 + trade_dt_ny.minute
+    mins = dt_ny.hour * 60 + dt_ny.minute
     for sess in TRADING_SESSIONS_NY:
         start_mins = sess["start"][0] * 60 + sess["start"][1]
         end_mins = sess["end"][0] * 60 + sess["end"][1]
-        if start_mins <= mins < end_mins:
-            return sess["name"]
-    return "Other / Off-Hours"
+        if start_mins < end_mins:
+            if start_mins <= mins < end_mins:
+                return sess["name"]
+        else:
+            if mins >= start_mins or mins < end_mins:
+                return sess["name"]
+    return "Outside Sessions"
 
 
 # ==============================================================================
@@ -284,27 +295,32 @@ def fetch_mt5_full_state(symbol: str = DEFAULT_SYMBOL):
                 "comment": p.comment,
             })
 
-    # 4. Executed Deals History (Today)
-    now_utc = datetime.utcnow()
-    start_of_day = datetime(now_utc.year, now_utc.month, now_utc.day)
-    deals = mt5.history_deals_get(start_of_day, now_utc + timedelta(days=1))
+    # 4. Executed Deals History (Last 7 Days)
+    now_utc = datetime.now(timezone.utc)
+    from_date = now_utc - timedelta(days=7)
+    deals = mt5.history_deals_get(from_date, now_utc + timedelta(days=1))
     executed_deals = []
     closed_pnl_today = 0.0
+    today_ny_date = datetime.now(tz=NY_TZ).date()
 
     if deals:
         for d in deals:
             # Filter for entry out (closing deals) or actual filled transactions
             deal_type_str = "BUY" if d.type == mt5.DEAL_TYPE_BUY else ("SELL" if d.type == mt5.DEAL_TYPE_SELL else "OTHER")
-            deal_time = datetime.fromtimestamp(d.time)
-            session_tag = classify_trade_session(deal_time)
-            
-            if d.entry == 1 or d.profit != 0: # Closed trade or has P&L
+            dt_utc = datetime.fromtimestamp(d.time, tz=timezone.utc)
+            dt_local = dt_utc.astimezone()
+            dt_ny = dt_utc.astimezone(NY_TZ)
+            session_tag = classify_trade_session(d.time)
+
+            is_closing_deal = (d.entry == 1) or (d.profit != 0)
+            if is_closing_deal and dt_ny.date() == today_ny_date:
                 closed_pnl_today += d.profit
 
             executed_deals.append({
                 "ticket": d.ticket,
                 "order": d.order,
-                "time": deal_time,
+                "time": dt_local.strftime("%Y-%m-%d %H:%M:%S"),
+                "time_ny": dt_ny.strftime("%H:%M:%S"),
                 "symbol": d.symbol,
                 "type": deal_type_str,
                 "entry": "IN" if d.entry == 0 else ("OUT" if d.entry == 1 else "IN/OUT"),
@@ -574,7 +590,7 @@ class CandlestickChart(tk.Frame):
 
 class EquantEdgeDashboard(tk.Tk):
 
-    REFRESH_MS = 10_000   # 10s auto-refresh for live M1 trading
+    REFRESH_MS = 1000   # 1s live real-time refresh
 
     def __init__(self):
         super().__init__()
@@ -1322,7 +1338,8 @@ class EquantEdgeDashboard(tk.Tk):
 
         for deal in executed_deals:
             sess_name = deal.get("session")
-            if sess_name in stats and deal.get("entry") == "OUT":
+            is_closed = (deal.get("entry") in ("OUT", "IN/OUT")) or (deal.get("profit", 0.0) != 0.0)
+            if is_closed and sess_name in stats:
                 pnl = deal.get("profit", 0.0)
                 stats[sess_name]["pnl"] += pnl
                 stats[sess_name]["trades"] += 1
