@@ -19,7 +19,7 @@ Usage:
 import time
 from zoneinfo import ZoneInfo
 import MetaTrader5 as mt5
-from datetime import datetime
+from datetime import datetime, timezone
 
 import os
 import sys
@@ -31,17 +31,19 @@ if __package__ is None or __package__ == "":
     from src.strategy import get_latest_signal
     from src.execution import place_order, set_dry_run, DRY_RUN
     import src.execution as execution
+    import src.db as db
 else:
     from .connect import connect, get_candles
     from .strategy import get_latest_signal
     from .execution import place_order, set_dry_run, DRY_RUN
     from . import execution
+    from . import db
 
 # ── Symbol / Timeframe ────────────────────────────────────────────────────────
 SYMBOL      = "XAUUSD"
 TIMEFRAME   = mt5.TIMEFRAME_M1
 NUM_CANDLES = 200          # must be > EMA period (50) + buffer
-POLL_SECS   = 15           # poll every 15 s; M1 bars close every 60 s
+POLL_SECS   = 1            # poll every 1 s for instantaneous signal execution
 RISK_PCT    = 1.0          # % of account balance to risk per trade
 SL_PIPS     = 150          # stop-loss distance in pips  (tune for Gold)
 TP_PIPS     = 300          # take-profit distance in pips (2:1 R:R)
@@ -95,6 +97,23 @@ def is_in_trading_session() -> bool:
                 return True
 
     return False
+
+
+def get_current_session_name() -> str:
+    """Return the name of the current active trading session."""
+    now = _now_ny()
+    now_mins = now.hour * 60 + now.minute
+    session_names = ["Asia (20:00-00:00)", "London (02:00-05:00)", "New York (07:00-11:00)"]
+    for idx, (start_h, start_m, end_h, end_m) in enumerate(TRADING_SESSIONS_NY):
+        start_mins = start_h * 60 + start_m
+        end_mins = 24 * 60 if end_h == 0 and end_m == 0 else end_h * 60 + end_m
+        if start_mins < end_mins:
+            if start_mins <= now_mins < end_mins:
+                return session_names[idx]
+        else:
+            if now_mins >= start_mins or now_mins < end_mins:
+                return session_names[idx]
+    return "Out of Session"
 
 
 def _session_status_line() -> str:
@@ -158,6 +177,30 @@ def main() -> None:
 
     try:
         while True:
+            # ── Check if tracked open position has closed in MT5 ───────────
+            if open_ticket is not None and open_ticket > 0:
+                pos = mt5.positions_get(ticket=open_ticket)
+                if not pos:
+                    # Position is closed; fetch deal outcome from MT5 history
+                    deals = mt5.history_deals_get(position=open_ticket)
+                    if deals and len(deals) >= 2:
+                        exit_deal = deals[-1]
+                        profit = sum(d.profit for d in deals)
+                        reason = "TP_HIT" if profit > 0 else "SL_HIT"
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}]  "
+                              f"↳ Position #{open_ticket} closed! Realized P&L: ${profit:+.2f} ({reason})")
+                        try:
+                            db.log_trade_close(
+                                ticket=open_ticket,
+                                close_price=exit_deal.price,
+                                close_time=datetime.fromtimestamp(exit_deal.time, tz=timezone.utc),
+                                profit_usd=profit,
+                                close_reason=reason,
+                            )
+                        except Exception:
+                            pass
+                    open_ticket = None
+
             # ── Session gate ───────────────────────────────────────────────
             if not is_in_trading_session():
                 now_minute = _now_ny().strftime("%H:%M")
@@ -183,6 +226,7 @@ def main() -> None:
 
                 # ── Place order on signal ──────────────────────────────────
                 if sig["signal"] != 0 and open_ticket is None:
+                    sess_name = get_current_session_name()
                     ticket = place_order(
                         symbol          = SYMBOL,
                         signal          = sig["signal"],
@@ -191,8 +235,12 @@ def main() -> None:
                         tp_pips         = TP_PIPS,
                         account_balance = account.balance,
                         risk_pct        = RISK_PCT,
+                        session         = sess_name,
+                        ema_50          = sig.get("ema_50"),
+                        mother_high     = sig.get("mother_high"),
+                        mother_low      = sig.get("mother_low"),
                     )
-                    if ticket:
+                    if ticket and ticket > 0:
                         open_ticket = ticket
                         print(f"  ↳ Order placed — ticket #{ticket}")
 
