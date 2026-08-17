@@ -29,11 +29,13 @@ if __package__ is None or __package__ == "":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from src.connect import connect, get_candles
     from src.strategy import get_latest_signal
-    from src.execution import place_order, DRY_RUN
+    from src.execution import place_order, set_dry_run, DRY_RUN
+    import src.execution as execution
 else:
     from .connect import connect, get_candles
     from .strategy import get_latest_signal
-    from .execution import place_order, DRY_RUN
+    from .execution import place_order, set_dry_run, DRY_RUN
+    from . import execution
 
 # ── Symbol / Timeframe ────────────────────────────────────────────────────────
 SYMBOL      = "XAUUSD"
@@ -131,8 +133,13 @@ def print_signal(sig: dict) -> None:
 
 
 def main() -> None:
+    if "--dry-run" in sys.argv:
+        set_dry_run(True)
+    else:
+        set_dry_run(False)
+
     print("EquantEdge — Inside Bar Breakout Strategy")
-    print(f"Mode   : {'DRY RUN (no real orders)' if DRY_RUN else '⚠️  LIVE TRADING'}")
+    print(f"Mode   : {'[DRY RUN — simulation only]' if execution.DRY_RUN else '⚡ REALTIME LIVE TRADING (Sending Real Orders to MT5 Demo)'}")
     print(f"Symbol : {SYMBOL}  |  Timeframe: M1  |  Poll: every {POLL_SECS}s")
     ny_now      = datetime.now(tz=_NY_TZ)
     utc_offset  = int(ny_now.utcoffset().total_seconds() // 3600)   # e.g. -4 or -5
