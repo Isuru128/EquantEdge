@@ -20,8 +20,15 @@ Signal column values:
    0  = no trade
 """
 
+import os
+import sys
 import pandas as pd
-from .patterns import is_inside_bar
+
+if __package__ is None or __package__ == "":
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from src.patterns import is_inside_bar
+else:
+    from .patterns import is_inside_bar
 
 
 EMA_PERIOD = 50   # trend filter period
