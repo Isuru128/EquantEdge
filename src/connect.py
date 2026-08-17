@@ -31,7 +31,7 @@ LOGIN = None          # e.g. 12345678
 PASSWORD = None        # e.g. "your_password"
 SERVER = None          # e.g. "YourBroker-Demo"
  
-def connect():
+def connect(silent: bool = False):
     """Initialize connection to the local MT5 terminal."""
     if not mt5.initialize():
         raise RuntimeError(f"initialize() failed, error: {mt5.last_error()}")
@@ -47,11 +47,12 @@ def connect():
         mt5.shutdown()
         raise RuntimeError("Could not fetch account info. Is a terminal running and logged in?")
 
-    print("Connected successfully.")
-    print(f"  Account:  {account_info.login}")
-    print(f"  Server:   {account_info.server}")
-    print(f"  Balance:  {account_info.balance} {account_info.currency}")
-    print(f"  Leverage: 1:{account_info.leverage}")
+    if not silent:
+        print("Connected successfully.")
+        print(f"  Account:  {account_info.login}")
+        print(f"  Server:   {account_info.server}")
+        print(f"  Balance:  {account_info.balance} {account_info.currency}")
+        print(f"  Leverage: 1:{account_info.leverage}")
     return account_info
 
 
