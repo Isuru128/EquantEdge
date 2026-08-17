@@ -1,38 +1,105 @@
 """
 run_live.py
 
-Main dry-run loop for the Inside Bar Breakout strategy.
+Main dry-run loop for the Inside Bar Breakout strategy on XAUUSD M1.
 
 What this script does:
   1. Connects to a running MT5 terminal (demo account).
-  2. Every M15 bar close, fetches the latest candles.
+  2. Every M1 bar close, fetches the latest candles.
   3. Runs the strategy to check for a signal on the last closed bar.
-  4. Prints any signal with entry levels (mother bar high/low).
-  5. Does NOT place real orders — this is a signal-monitor / dry-run.
-
-To place real orders, wire up execution.py (not yet implemented).
+  4. ONLY acts on signals during the three configured New York (UTC-4) session
+     windows; all other times are skipped silently (one log line per minute).
+  5. Prints any signal with entry levels (mother bar high/low).
+  6. Places orders via execution.py (DRY_RUN = True by default → no real orders).
 
 Usage:
-    python src/run_live.py
+    python -m src.run_live
 """
 
 import time
+from zoneinfo import ZoneInfo
 import MetaTrader5 as mt5
 from datetime import datetime
 
-from .connect import connect, get_candles
-from .strategy import get_latest_signal
-from .execution import place_order, close_position, DRY_RUN
+import os
+import sys
 
-# ── Config ────────────────────────────────────────────────────────────────────
-SYMBOL      = "EURUSD"
-TIMEFRAME   = mt5.TIMEFRAME_M15
-NUM_CANDLES = 200          # needs to be > EMA period (50) + buffer
-POLL_SECS   = 60           # check every 60 s; M15 bars close every 900 s
+# Allow running directly as a script (python src/run_live.py) or as a module (python -m src.run_live)
+if __package__ is None or __package__ == "":
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from src.connect import connect, get_candles
+    from src.strategy import get_latest_signal
+    from src.execution import place_order, DRY_RUN
+else:
+    from .connect import connect, get_candles
+    from .strategy import get_latest_signal
+    from .execution import place_order, DRY_RUN
+
+# ── Symbol / Timeframe ────────────────────────────────────────────────────────
+SYMBOL      = "XAUUSD"
+TIMEFRAME   = mt5.TIMEFRAME_M1
+NUM_CANDLES = 200          # must be > EMA period (50) + buffer
+POLL_SECS   = 15           # poll every 15 s; M1 bars close every 60 s
 RISK_PCT    = 1.0          # % of account balance to risk per trade
-SL_PIPS     = 15           # stop-loss distance in pips from entry
-TP_PIPS     = 30           # take-profit distance in pips (2:1 R:R)
+SL_PIPS     = 150          # stop-loss distance in pips  (tune for Gold)
+TP_PIPS     = 300          # take-profit distance in pips (2:1 R:R)
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ── Trading Sessions — New York time (UTC-4) ──────────────────────────────────
+# Format: (start_hour, start_min, end_hour, end_min)  — 24-hour clock.
+# A window whose end time is 00:00 means "until midnight" (23:59:59).
+TRADING_SESSIONS_NY = [
+    (20,  0,  0,  0),   # Asia     : 20:00 – 00:00  NY
+    ( 2,  0,  5,  0),   # London   : 02:00 – 05:00  NY
+    ( 7,  0, 11,  0),   # New York : 07:00 – 11:00  NY
+]
+# America/New_York automatically switches between EDT (UTC-4) and EST (UTC-5)
+_NY_TZ = ZoneInfo("America/New_York")
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _now_ny() -> datetime:
+    """Return the current wall-clock datetime in New York (auto EDT/EST), timezone-naive."""
+    return datetime.now(tz=_NY_TZ).replace(tzinfo=None)
+
+
+def is_in_trading_session() -> bool:
+    """
+    Return True if the current New York time falls inside any configured
+    TRADING_SESSIONS_NY window.
+
+    End time of 00:00 is interpreted as "end of day" (i.e. up to 23:59:59).
+    Windows that start > end in minute-of-day terms are treated as
+    crossing midnight (e.g. 20:00 start → runs until end of that calendar day).
+    """
+    now      = _now_ny()
+    now_mins = now.hour * 60 + now.minute   # minutes elapsed since midnight
+
+    for start_h, start_m, end_h, end_m in TRADING_SESSIONS_NY:
+        start_mins = start_h * 60 + start_m
+        end_mins   = end_h   * 60 + end_m
+
+        # Treat 00:00 end as "end of calendar day"
+        if end_mins == 0:
+            end_mins = 24 * 60   # 1440
+
+        if start_mins < end_mins:
+            # Normal (non-midnight-crossing) window
+            if start_mins <= now_mins < end_mins:
+                return True
+        else:
+            # Window crosses midnight
+            if now_mins >= start_mins or now_mins < end_mins:
+                return True
+
+    return False
+
+
+def _session_status_line() -> str:
+    """One-liner showing current NY time and session status."""
+    ny  = _now_ny()
+    tag = "✅ IN SESSION" if is_in_trading_session() else "⏸  OUT OF SESSION"
+    return f"NY {ny.strftime('%H:%M:%S')}  {tag}"
 
 
 def print_signal(sig: dict) -> None:
@@ -40,8 +107,8 @@ def print_signal(sig: dict) -> None:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     if sig["signal"] == 0:
-        print(f"[{ts}]  No signal  |  Trend: {sig.get('trend','?')}  "
-              f"|  EMA-50: {sig.get('ema_50','?')}  "
+        print(f"[{ts}]  No signal  |  Trend: {sig.get('trend', '?')}  "
+              f"|  EMA-50: {sig.get('ema_50', '?')}  "
               f"|  Inside bar: {sig.get('inside_bar', False)}")
         return
 
@@ -65,35 +132,58 @@ def print_signal(sig: dict) -> None:
 
 def main() -> None:
     print("EquantEdge — Inside Bar Breakout Strategy")
-    print(f"Mode: {'DRY RUN (no real orders)' if DRY_RUN else '⚠️  LIVE TRADING'}")
-    print(f"Symbol: {SYMBOL}  |  Timeframe: M15  |  Poll: every {POLL_SECS}s")
+    print(f"Mode   : {'DRY RUN (no real orders)' if DRY_RUN else '⚠️  LIVE TRADING'}")
+    print(f"Symbol : {SYMBOL}  |  Timeframe: M1  |  Poll: every {POLL_SECS}s")
+    ny_now      = datetime.now(tz=_NY_TZ)
+    utc_offset  = int(ny_now.utcoffset().total_seconds() // 3600)   # e.g. -4 or -5
+    tz_abbr     = ny_now.strftime("%Z")                             # e.g. "EDT" or "EST"
+    print(f"Timezone : America/New_York  ({tz_abbr}, UTC{utc_offset:+d})")
+    print("Sessions :")
+    for sh, sm, eh, em in TRADING_SESSIONS_NY:
+        end_label = "00:00 (midnight)" if (eh == 0 and em == 0) else f"{eh:02d}:{em:02d}"
+        print(f"  •  {sh:02d}:{sm:02d} – {end_label}")
     print("Press Ctrl+C to stop.\n")
 
     account = connect()
-    open_ticket = None   # track if we have a position open
-
-    last_seen_bar = None
+    open_ticket      = None   # currently tracked open position
+    last_seen_bar    = None   # last bar datetime we processed
+    last_out_log_min = None   # throttle "outside session" log to once/minute
 
     try:
         while True:
+            # ── Session gate ───────────────────────────────────────────────
+            if not is_in_trading_session():
+                now_minute = _now_ny().strftime("%H:%M")
+                if now_minute != last_out_log_min:
+                    last_out_log_min = now_minute
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}]  "
+                          f"{_session_status_line()} — waiting for next window.")
+                time.sleep(POLL_SECS)
+                continue
+
+            # Back inside a session — reset the out-of-session log throttle
+            last_out_log_min = None
+
+            # ── Fetch candles and evaluate strategy ────────────────────────
             df  = get_candles(SYMBOL, TIMEFRAME, NUM_CANDLES)
             sig = get_latest_signal(df)
 
             bar_time = sig.get("datetime")
             if bar_time != last_seen_bar:
                 last_seen_bar = bar_time
+                print(f"[{datetime.now().strftime('%H:%M:%S')}]  {_session_status_line()}")
                 print_signal(sig)
 
-                # ── Act on signal ──────────────────────────────────────────
+                # ── Place order on signal ──────────────────────────────────
                 if sig["signal"] != 0 and open_ticket is None:
                     ticket = place_order(
-                        symbol      = SYMBOL,
-                        signal      = sig["signal"],
-                        entry_price = sig["mother_high"] if sig["signal"] == 1 else sig["mother_low"],
-                        sl_pips     = SL_PIPS,
-                        tp_pips     = TP_PIPS,
+                        symbol          = SYMBOL,
+                        signal          = sig["signal"],
+                        entry_price     = sig["mother_high"] if sig["signal"] == 1 else sig["mother_low"],
+                        sl_pips         = SL_PIPS,
+                        tp_pips         = TP_PIPS,
                         account_balance = account.balance,
-                        risk_pct    = RISK_PCT,
+                        risk_pct        = RISK_PCT,
                     )
                     if ticket:
                         open_ticket = ticket
