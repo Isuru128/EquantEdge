@@ -23,8 +23,10 @@ from datetime import datetime
 if __package__ is None or __package__ == "":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from src.risk import calculate_lot_size
+    import src.db as db
 else:
     from .risk import calculate_lot_size
+    from . import db
 
 # ── Live execution mode (False = Send real orders to MT5 demo) ───────────────
 DRY_RUN: bool = False
@@ -86,6 +88,10 @@ def place_order(
     account_balance: float,
     risk_pct: float,
     comment: str = "EquantEdge IB",
+    session: str | None = None,
+    ema_50: float | None = None,
+    mother_high: float | None = None,
+    mother_low: float | None = None,
 ) -> int | None:
     """
     Place a market order in the direction of `signal`.
@@ -99,6 +105,10 @@ def place_order(
     account_balance : current account balance for lot sizing
     risk_pct        : fraction of balance to risk (e.g. 1.0 = 1%)
     comment         : MT5 order comment
+    session         : active trading session name (e.g. 'New York')
+    ema_50          : EMA indicator snapshot at signal
+    mother_high     : mother bar high level
+    mother_low      : mother bar low level
 
     Returns
     -------
@@ -191,14 +201,44 @@ def place_order(
         "type_filling": filling_mode,
     }
 
+    SUCCESS_RETCODES = (
+        mt5.TRADE_RETCODE_DONE,           # 10009: Request completed
+        mt5.TRADE_RETCODE_PLACED,         # 10008: Order placed
+        mt5.TRADE_RETCODE_DONE_PARTIAL,   # 10010: Request completed partially
+        0,                                # 0: Done / Success
+    )
+
     result = mt5.order_send(request)
-    if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+    is_success = result is not None and (
+        result.retcode in SUCCESS_RETCODES or (getattr(result, "order", 0) > 0)
+    )
+
+    if not is_success:
         code = result.retcode if result else "None"
         print(f"{_log_prefix()} ERROR placing order: retcode={code}  "
               f"comment={getattr(result, 'comment', 'N/A')}")
         return None
 
     print(f"{_log_prefix()} Order filled — ticket #{result.order}")
+
+    # Log to Supabase Database
+    try:
+        db.log_trade_open(
+            ticket=result.order,
+            symbol=symbol,
+            side=direction.strip(),
+            lot_size=lot_size,
+            open_price=price,
+            sl=sl,
+            tp=tp,
+            session=session,
+            ema_50=ema_50,
+            mother_high=mother_high,
+            mother_low=mother_low,
+        )
+    except Exception as exc:
+        print(f"{_log_prefix()} Warning: DB log trade open failed: {exc}")
+
     return result.order
 
 
@@ -254,12 +294,28 @@ def close_position(ticket: int, symbol: str, comment: str = "EquantEdge close") 
     }
 
     result = mt5.order_send(request)
-    if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+    is_success = result is not None and (
+        result.retcode in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED, mt5.TRADE_RETCODE_DONE_PARTIAL, 0)
+        or (getattr(result, "order", 0) > 0) or (getattr(result, "deal", 0) > 0)
+    )
+    if not is_success:
         code = result.retcode if result else "None"
-        print(f"{_log_prefix()} ERROR closing position: retcode={code}")
+        print(f"{_log_prefix()} ERROR closing position: retcode={code} comment={getattr(result, 'comment', 'N/A')}")
         return False
 
     print(f"{_log_prefix()} Position #{ticket} closed successfully.")
+
+    # Log close to Supabase Database
+    try:
+        db.log_trade_close(
+            ticket=ticket,
+            close_price=close_price,
+            profit_usd=getattr(pos, 'profit', None),
+            close_reason=comment,
+        )
+    except Exception as exc:
+        print(f"{_log_prefix()} Warning: DB log trade close failed: {exc}")
+
     return True
 
 
