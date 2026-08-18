@@ -43,7 +43,7 @@ else:
 SYMBOL      = "XAUUSD"
 TIMEFRAME   = mt5.TIMEFRAME_M1
 NUM_CANDLES = 200          # must be > EMA period (50) + buffer
-POLL_SECS   = 1            # poll every 1 s for instantaneous signal execution
+POLL_SECS   = 15           # poll every 15 s; M1 bars close every 60 s
 RISK_PCT    = 1.0          # % of account balance to risk per trade
 SL_PIPS     = 150          # stop-loss distance in pips  (tune for Gold)
 TP_PIPS     = 300          # take-profit distance in pips (2:1 R:R)
@@ -53,7 +53,7 @@ TP_PIPS     = 300          # take-profit distance in pips (2:1 R:R)
 # Format: (start_hour, start_min, end_hour, end_min)  — 24-hour clock.
 # A window whose end time is 00:00 means "until midnight" (23:59:59).
 TRADING_SESSIONS_NY = [
-    (20,  0,  0,  0),   # Asia     : 20:00 – 00:00  NY
+    (20,  0,  0,  0),   # Asia     : 20:00 – 00:00  NY (midnight)
     ( 2,  0,  5,  0),   # London   : 02:00 – 05:00  NY
     ( 7,  0, 11,  0),   # New York : 07:00 – 11:00  NY
 ]
@@ -69,51 +69,37 @@ def _now_ny() -> datetime:
 
 def is_in_trading_session() -> bool:
     """
-    Return True if the current New York time falls inside any configured
-    TRADING_SESSIONS_NY window.
-
-    End time of 00:00 is interpreted as "end of day" (i.e. up to 23:59:59).
-    Windows that start > end in minute-of-day terms are treated as
-    crossing midnight (e.g. 20:00 start → runs until end of that calendar day).
+    Return True if the current New York time falls strictly inside one of the
+    3 configured trading sessions:
+      • Asia     : 20:00 – 00:00 NY
+      • London   : 02:00 – 05:00 NY
+      • New York : 07:00 – 11:00 NY
+    All other hours are Off-Hours and no trades will be executed.
     """
     now      = _now_ny()
     now_mins = now.hour * 60 + now.minute   # minutes elapsed since midnight
 
     for start_h, start_m, end_h, end_m in TRADING_SESSIONS_NY:
         start_mins = start_h * 60 + start_m
-        end_mins   = end_h   * 60 + end_m
+        end_mins   = 24 * 60 if (end_h == 0 and end_m == 0) else (end_h * 60 + end_m)
 
-        # Treat 00:00 end as "end of calendar day"
-        if end_mins == 0:
-            end_mins = 24 * 60   # 1440
-
-        if start_mins < end_mins:
-            # Normal (non-midnight-crossing) window
-            if start_mins <= now_mins < end_mins:
-                return True
-        else:
-            # Window crosses midnight
-            if now_mins >= start_mins or now_mins < end_mins:
-                return True
+        if start_mins <= now_mins < end_mins:
+            return True
 
     return False
 
 
 def get_current_session_name() -> str:
-    """Return the name of the current active trading session."""
+    """Return the name of the current active trading session: Asia, London, New York, or Off-Hours."""
     now = _now_ny()
     now_mins = now.hour * 60 + now.minute
-    session_names = ["Asia (20:00-00:00)", "London (02:00-05:00)", "New York (07:00-11:00)"]
+    session_names = ["Asia", "London", "New York"]
     for idx, (start_h, start_m, end_h, end_m) in enumerate(TRADING_SESSIONS_NY):
         start_mins = start_h * 60 + start_m
-        end_mins = 24 * 60 if end_h == 0 and end_m == 0 else end_h * 60 + end_m
-        if start_mins < end_mins:
-            if start_mins <= now_mins < end_mins:
-                return session_names[idx]
-        else:
-            if now_mins >= start_mins or now_mins < end_mins:
-                return session_names[idx]
-    return "Out of Session"
+        end_mins   = 24 * 60 if (end_h == 0 and end_m == 0) else (end_h * 60 + end_m)
+        if start_mins <= now_mins < end_mins:
+            return session_names[idx]
+    return "Off-Hours"
 
 
 def _session_status_line() -> str:
