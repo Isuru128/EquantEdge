@@ -50,9 +50,9 @@ DEFAULT_SYMBOL = "XAUUSD"
 NY_TZ = ZoneInfo("America/New_York")
 
 TRADING_SESSIONS_NY = [
-    {"name": "Asia Session",     "start": (20, 0), "end": (24, 0), "code": "ASIA",     "color": "#8A2BE2"},
-    {"name": "London Session",   "start": (2, 0),  "end": (5, 0),  "code": "LONDON",   "color": "#00C8A0"},
-    {"name": "New York Session", "start": (7, 0),  "end": (11, 0), "code": "NEW_YORK", "color": "#FF8C00"},
+    {"name": "Asia",     "start": (20, 0), "end": (24, 0), "code": "ASIA",     "color": "#8A2BE2", "time_range": "20:00 - 00:00 NY"},
+    {"name": "London",   "start": (2, 0),  "end": (5, 0),  "code": "LONDON",   "color": "#00C8A0", "time_range": "02:00 - 05:00 NY"},
+    {"name": "New York", "start": (7, 0),  "end": (11, 0), "code": "NEW_YORK", "color": "#FF8C00", "time_range": "07:00 - 11:00 NY"},
 ]
 
 # ---- Colour Palette (Cyberpunk / Modern Quant Dark Theme) --------------------
@@ -93,9 +93,6 @@ CHART_STYLE = mpf.make_mpf_style(
     facecolor=PANEL,
     figcolor=PANEL,
     gridcolor=BORDER,
-    gridstyle="--",
-    gridaxis="both",
-    y_on_right=True,
     rc={
         "axes.labelcolor":  TEXT_DIM,
         "axes.edgecolor":   BORDER,
@@ -121,8 +118,10 @@ def get_ny_now() -> datetime:
 
 def get_active_session_info() -> dict:
     """
-    Check if current NY time is within any of the 3 configured sessions.
-    Returns session dict + status flag.
+    Check if current NY time is within any of the 3 configured sessions:
+      • Asia     : 20:00 – 00:00 NY
+      • London   : 02:00 – 05:00 NY
+      • New York : 07:00 – 11:00 NY
     """
     ny_now = get_ny_now()
     now_mins = ny_now.hour * 60 + ny_now.minute
@@ -137,22 +136,25 @@ def get_active_session_info() -> dict:
                 "name": sess["name"],
                 "code": sess["code"],
                 "color": sess["color"],
-                "time_range": f"{sess['start'][0]:02d}:{sess['start'][1]:02d} - {sess['end'][0]:02d}:{sess['end'][1]:02d} NY",
+                "time_range": sess.get("time_range", f"{sess['start'][0]:02d}:{sess['start'][1]:02d} - {sess['end'][0]:02d}:{sess['end'][1]:02d} NY"),
             }
 
     return {
         "in_session": False,
-        "name": "Outside Sessions",
+        "name": "Off-Hours",
         "code": "OFF_HOURS",
-        "color": TEXT_DIM,
-        "time_range": "Closed for strategy execution",
+        "color": "#64748B",
+        "time_range": "Closed / Out of Session",
     }
 
 
 def classify_trade_session(trade_time) -> str:
     """
-    Accurately classify any trade timestamp (epoch, naive local, or UTC) into
-    one of the 3 configured New York trading sessions.
+    Accurately classify trade timestamp into:
+      • Asia     (20:00 – 00:00 NY)
+      • London   (02:00 – 05:00 NY)
+      • New York (07:00 – 11:00 NY)
+      • Off-Hours (all other times)
     """
     try:
         if isinstance(trade_time, (int, float)):
@@ -163,21 +165,18 @@ def classify_trade_session(trade_time) -> str:
             else:
                 dt_ny = trade_time.astimezone(NY_TZ)
         else:
-            return "Outside Sessions"
+            return "Off-Hours"
     except Exception:
-        return "Outside Sessions"
+        return "Off-Hours"
 
     mins = dt_ny.hour * 60 + dt_ny.minute
     for sess in TRADING_SESSIONS_NY:
         start_mins = sess["start"][0] * 60 + sess["start"][1]
         end_mins = sess["end"][0] * 60 + sess["end"][1]
-        if start_mins < end_mins:
-            if start_mins <= mins < end_mins:
-                return sess["name"]
-        else:
-            if mins >= start_mins or mins < end_mins:
-                return sess["name"]
-    return "Outside Sessions"
+        if start_mins <= mins < end_mins:
+            return sess["name"]
+
+    return "Off-Hours"
 
 
 # ==============================================================================
@@ -273,6 +272,12 @@ def fetch_mt5_full_state(symbol: str = DEFAULT_SYMBOL):
         "leverage": acc.leverage,
     }
 
+    # Calculate dynamic broker server offset vs UTC
+    server_offset_seconds = 0
+    tick = mt5.symbol_info_tick(symbol)
+    if tick:
+        server_offset_seconds = round((tick.time - datetime.now(timezone.utc).timestamp()) / 3600.0) * 3600
+
     # 3. Active Positions (Executing orders)
     positions = mt5.positions_get(symbol=symbol)
     if positions is None:
@@ -280,9 +285,11 @@ def fetch_mt5_full_state(symbol: str = DEFAULT_SYMBOL):
     open_positions = []
     if positions:
         for p in positions:
+            pos_utc_ts = p.time - server_offset_seconds
+            pos_dt_ny = datetime.fromtimestamp(pos_utc_ts, tz=timezone.utc).astimezone(NY_TZ)
             open_positions.append({
                 "ticket": p.ticket,
-                "time": datetime.fromtimestamp(p.time),
+                "time": pos_dt_ny.strftime("%Y-%m-%d %H:%M:%S"),
                 "type": "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL",
                 "volume": p.volume,
                 "price_open": p.price_open,
@@ -303,24 +310,30 @@ def fetch_mt5_full_state(symbol: str = DEFAULT_SYMBOL):
     closed_pnl_today = 0.0
     today_ny_date = datetime.now(tz=NY_TZ).date()
 
+    # Map each position to its original opening deal timestamp
+    open_deal_times = {}
     if deals:
         for d in deals:
-            # Filter for entry out (closing deals) or actual filled transactions
-            deal_type_str = "BUY" if d.type == mt5.DEAL_TYPE_BUY else ("SELL" if d.type == mt5.DEAL_TYPE_SELL else "OTHER")
-            dt_utc = datetime.fromtimestamp(d.time, tz=timezone.utc)
-            dt_local = dt_utc.astimezone()
-            dt_ny = dt_utc.astimezone(NY_TZ)
-            session_tag = classify_trade_session(d.time)
+            if d.entry == 0:  # DEAL_ENTRY_IN
+                open_deal_times[d.position_id] = d.time
 
+        for d in deals:
+            # Use opening timestamp of the trade
+            open_raw_time = open_deal_times.get(d.position_id, d.time)
+            utc_open_ts = open_raw_time - server_offset_seconds
+            dt_open_ny = datetime.fromtimestamp(utc_open_ts, tz=timezone.utc).astimezone(NY_TZ)
+            session_tag = classify_trade_session(utc_open_ts)
+
+            deal_type_str = "BUY" if d.type == mt5.DEAL_TYPE_BUY else ("SELL" if d.type == mt5.DEAL_TYPE_SELL else "OTHER")
             is_closing_deal = (d.entry == 1) or (d.profit != 0)
-            if is_closing_deal and dt_ny.date() == today_ny_date:
+            if is_closing_deal and dt_open_ny.date() == today_ny_date:
                 closed_pnl_today += d.profit
 
             executed_deals.append({
                 "ticket": d.ticket,
                 "order": d.order,
-                "time": dt_local.strftime("%Y-%m-%d %H:%M:%S"),
-                "time_ny": dt_ny.strftime("%H:%M:%S"),
+                "time": dt_open_ny.strftime("%Y-%m-%d %H:%M:%S"),
+                "time_ny": dt_open_ny.strftime("%H:%M:%S"),
                 "symbol": d.symbol,
                 "type": deal_type_str,
                 "entry": "IN" if d.entry == 0 else ("OUT" if d.entry == 1 else "IN/OUT"),
@@ -580,7 +593,6 @@ class CandlestickChart(tk.Frame):
             f"{'MT5 LIVE CONNECTION' if LIVE_MODE else 'OFFLINE DEMO DATA'}",
             color=TEXT, fontsize=9.5, pad=8, loc="left", fontweight="bold"
         )
-
         self._attach(fig)
 
 
@@ -590,7 +602,7 @@ class CandlestickChart(tk.Frame):
 
 class EquantEdgeDashboard(tk.Tk):
 
-    REFRESH_MS = 1000   # 1s live real-time refresh
+    REFRESH_MS = 15_000   # 15s auto-refresh for live M1 trading
 
     def __init__(self):
         super().__init__()
@@ -864,8 +876,8 @@ class EquantEdgeDashboard(tk.Tk):
         self._pos_count_lbl.pack(side="right")
 
         pos_cols = ("ticket", "symbol", "type", "volume", "open_price", "curr_price", "sl", "tp", "pnl", "open_time")
-        pos_hdrs = ("Ticket", "Symbol", "Type", "Lots", "Open Price", "Current Price", "SL", "TP", "P&L ($)", "Opened (Local)")
-        pos_wids = (90, 80, 70, 60, 90, 90, 80, 80, 100, 140)
+        pos_hdrs = ("Ticket", "Symbol", "Type", "Lots", "Open Price", "Current Price", "SL", "TP", "P&L ($)", "Opened (NY / UTC-4)")
+        pos_wids = (90, 80, 70, 60, 90, 90, 80, 80, 100, 150)
 
         self._pos_tv = ttk.Treeview(top_card, columns=pos_cols, show="headings",
                                     style="TV.Treeview", selectmode="browse")
@@ -899,8 +911,8 @@ class EquantEdgeDashboard(tk.Tk):
         self._deals_pnl_lbl.pack(side="right")
 
         deal_cols = ("ticket", "time", "symbol", "type", "entry", "volume", "price", "profit", "commission", "session")
-        deal_hdrs = ("Deal #", "Time (Local)", "Symbol", "Type", "Entry/Exit", "Lots", "Fill Price", "Realized P&L ($)", "Commission", "Trading Session")
-        deal_wids = (80, 130, 80, 65, 75, 60, 90, 120, 85, 140)
+        deal_hdrs = ("Deal #", "Open Time (NY / UTC-4)", "Symbol", "Type", "Entry/Exit", "Lots", "Fill Price", "Realized P&L ($)", "Commission", "Trading Session")
+        deal_wids = (80, 150, 80, 65, 75, 60, 90, 120, 85, 140)
 
         self._deal_tv = ttk.Treeview(bot_card, columns=deal_cols, show="headings",
                                      style="TV.Treeview", selectmode="browse")
@@ -922,15 +934,14 @@ class EquantEdgeDashboard(tk.Tk):
     # --------------------------------------------------------------------------
 
     def _build_sessions_tab(self, p):
-        p.columnconfigure(0, weight=1)
-        p.columnconfigure(1, weight=1)
-        p.columnconfigure(2, weight=1)
+        for col_idx in range(len(TRADING_SESSIONS_NY)):
+            p.columnconfigure(col_idx, weight=1)
         p.rowconfigure(0, weight=0)
         p.rowconfigure(1, weight=1)
 
         self._session_widgets = {}
 
-        # 3 Dedicated Session Analytics Cards
+        # 4 Dedicated Session Analytics Cards
         for i, sess in enumerate(TRADING_SESSIONS_NY):
             card = Card(p)
             card.grid(row=0, column=i, sticky="nsew", padx=4, pady=4)
@@ -940,7 +951,7 @@ class EquantEdgeDashboard(tk.Tk):
             h.pack(fill="x")
             tk.Label(h, text=f"● {sess['name']}", font=F_SECTION,
                      bg=PANEL, fg=sess["color"]).pack(side="left")
-            time_str = f"{sess['start'][0]:02d}:{sess['start'][1]:02d} - {sess['end'][0]:02d}:{sess['end'][1]:02d} NY"
+            time_str = sess.get("time_range", f"{sess['start'][0]:02d}:{sess['start'][1]:02d} - {sess['end'][0]:02d}:{sess['end'][1]:02d} NY")
             tk.Label(h, text=time_str, font=F_LABEL_B, bg=PANEL2, fg=TEXT, padx=6, pady=1).pack(side="right")
 
             HRule(card, color=BORDER).pack(fill="x", pady=8)
@@ -964,7 +975,7 @@ class EquantEdgeDashboard(tk.Tk):
 
         # Bottom: Comparative Session Performance Chart
         chart_card = Card(p)
-        chart_card.grid(row=1, column=0, columnspan=3, sticky="nsew", padx=4, pady=4)
+        chart_card.grid(row=1, column=0, columnspan=len(TRADING_SESSIONS_NY), sticky="nsew", padx=4, pady=4)
         chart_card.columnconfigure(0, weight=1)
         chart_card.rowconfigure(1, weight=1)
 
@@ -1352,6 +1363,8 @@ class EquantEdgeDashboard(tk.Tk):
         active_sess = get_active_session_info()
 
         for sess_name, data in stats.items():
+            if sess_name not in self._session_widgets:
+                continue
             w = self._session_widgets[sess_name]
             pnl = data["pnl"]
             trades = data["trades"]
