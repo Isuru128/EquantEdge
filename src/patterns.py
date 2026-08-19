@@ -93,3 +93,81 @@ def is_engulfing(df: pd.DataFrame) -> pd.Series:
     )
 
     return (bullish_engulf | bearish_engulf).fillna(False)
+
+
+def is_liquidity_sweep_sell(df: pd.DataFrame, swing_window: int | None = 10) -> pd.Series:
+    """
+    Bearish Liquidity Sweep & Reversal Pattern:
+      1. Candle 1 (t-1) is Bullish (prev_close > prev_open)
+      2. Candle 2 (t) is Bearish (curr_close < curr_open)
+      3. Candle 2 sweeps Candle 1 High (curr_high > prev_high) -> Liquidity Taken
+      4. Candle 2 closes below Candle 1 Open (curr_close < prev_open) -> Full breakdown confirmation
+      5. (Optional) Candle 1 High is a prominent swing high over `swing_window` bars.
+    """
+    prev_open  = df["open"].shift(1)
+    prev_close = df["close"].shift(1)
+    prev_high  = df["high"].shift(1)
+
+    curr_open  = df["open"]
+    curr_close = df["close"]
+    curr_high  = df["high"]
+
+    cond_prev_bullish = prev_close > prev_open
+    cond_curr_bearish = curr_close < curr_open
+    cond_sweep_high   = curr_high > prev_high
+    cond_close_break  = curr_close < prev_open
+
+    sweep_sell = (
+        cond_prev_bullish &
+        cond_curr_bearish &
+        cond_sweep_high &
+        cond_close_break
+    )
+
+    if swing_window and swing_window > 1:
+        # Check that Candle 1 high was the highest high of prior swing window
+        prior_high_max = df["high"].shift(1).rolling(window=swing_window, min_periods=2).max()
+        cond_swing = prev_high >= (prior_high_max - 1e-6)
+        sweep_sell = sweep_sell & cond_swing
+
+    return sweep_sell.fillna(False)
+
+
+def is_liquidity_sweep_buy(df: pd.DataFrame, swing_window: int | None = 10) -> pd.Series:
+    """
+    Bullish Liquidity Sweep & Reversal Pattern (Mirror):
+      1. Candle 1 (t-1) is Bearish (prev_close < prev_open)
+      2. Candle 2 (t) is Bullish (curr_close > curr_open)
+      3. Candle 2 sweeps Candle 1 Low (curr_low < prev_low) -> Liquidity Taken
+      4. Candle 2 closes above Candle 1 Open (curr_close > prev_open) -> Full breakout confirmation
+      5. (Optional) Candle 1 Low is a prominent swing low over `swing_window` bars.
+    """
+    prev_open  = df["open"].shift(1)
+    prev_close = df["close"].shift(1)
+    prev_low   = df["low"].shift(1)
+
+    curr_open  = df["open"]
+    curr_close = df["close"]
+    curr_low   = df["low"]
+
+    cond_prev_bearish = prev_close < prev_open
+    cond_curr_bullish = curr_close > curr_open
+    cond_sweep_low    = curr_low < prev_low
+    cond_close_break  = curr_close > prev_open
+
+    sweep_buy = (
+        cond_prev_bearish &
+        cond_curr_bullish &
+        cond_sweep_low &
+        cond_close_break
+    )
+
+    if swing_window and swing_window > 1:
+        # Check that Candle 1 low was the lowest low of prior swing window
+        prior_low_min = df["low"].shift(1).rolling(window=swing_window, min_periods=2).min()
+        cond_swing = prev_low <= (prior_low_min + 1e-6)
+        sweep_buy = sweep_buy & cond_swing
+
+    return sweep_buy.fillna(False)
+
+

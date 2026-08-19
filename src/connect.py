@@ -57,8 +57,34 @@ def connect(silent: bool = False):
 
 
 def get_candles(symbol: str, timeframe, count: int) -> pd.DataFrame:
-    """Pull the most recent `count` candles for `symbol` as a DataFrame."""
+    """Pull the most recent `count` candles for `symbol` as a DataFrame with chunked fallback."""
+    # Ensure symbol is selected in Market Watch
+    mt5.symbol_select(symbol, True)
+
     rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
+    
+    # If single request failed (e.g. requested count > MT5 single buffer limit ~50k-65k)
+    if rates is None or len(rates) == 0:
+        chunk_size = 40000
+        collected_rates = []
+        offset = 0
+        while offset < count:
+            batch_count = min(chunk_size, count - offset)
+            batch = mt5.copy_rates_from_pos(symbol, timeframe, offset, batch_count)
+            if batch is None or len(batch) == 0:
+                break
+            collected_rates.append(batch)
+            offset += len(batch)
+            if len(batch) < batch_count:
+                break  # Reached oldest available bar in broker history
+
+        if collected_rates:
+            import numpy as np
+            rates = np.concatenate(collected_rates[::-1])  # chronological order
+        else:
+            # Final fallback: try fetching whatever max bars broker has
+            rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, 50000)
+
     if rates is None or len(rates) == 0:
         raise RuntimeError(
             f"No data returned for {symbol}. Check the symbol is visible "
@@ -75,7 +101,11 @@ def get_candles(symbol: str, timeframe, count: int) -> pd.DataFrame:
         "close": "close",
         "tick_volume": "volume",
     }, inplace=True)
+    df.drop_duplicates(subset=["datetime"], inplace=True)
+    df.sort_values(by="datetime", inplace=True)
+    df.reset_index(drop=True, inplace=True)
     return df[["datetime", "open", "high", "low", "close", "volume"]]
+
 
 
 def basic_candle_tags(df: pd.DataFrame) -> pd.DataFrame:

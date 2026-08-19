@@ -39,33 +39,61 @@ def set_dry_run(enable: bool) -> None:
 # ───────────────────────────────────────────────────────────────────────────
 
 PIP_DIGITS = {
-    # pairs where 1 pip = 0.0001
+    # Forex majors (EURUSD, GBPUSD, etc.): 1 pip = 0.0001
     "default": 4,
-    # pairs where 1 pip = 0.01 (JPY pairs)
+    # JPY pairs: 1 pip = 0.01
     "JPY": 2,
-    # Gold / Silver spot: quoted to 2 decimal places (1 pip = 0.01)
+    # Gold / Silver: 1 pip = 0.01
     "XAU": 2,
     "XAG": 2,
+    # US30 / Dow Jones index: 1 point = 1.0 (or 0 decimal places)
+    "US30": 0,
+    "DJI": 0,
+    "WS30": 0,
 }
 
 _log_prefix = lambda: f"[{datetime.now().strftime('%H:%M:%S')}][{'DRY' if DRY_RUN else 'LIVE'}]"
 
 
 def _pip_size(symbol: str) -> float:
-    """Return pip size for a symbol.
+    """Return pip/point size for a symbol.
 
-    * Metals (XAU, XAG)  → 0.01  (2 decimal places)
-    * JPY pairs          → 0.01  (2 decimal places)
-    * All other pairs    → 0.0001 (4 decimal places)
+    * Indices (US30, DJI, WS30) → 1.0  (1 point)
+    * Metals (XAU, XAG)         → 0.01 (2 decimal places)
+    * JPY pairs                 → 0.01 (2 decimal places)
+    * Forex (EURUSD, GBPUSD)    → 0.0001 (4 decimal places)
     """
     sym = symbol.upper()
-    if "XAU" in sym or "XAG" in sym:
+    if any(k in sym for k in ("US30", "DJI", "WS30")):
+        return 1.0
+    elif "XAU" in sym or "XAG" in sym:
         digits = PIP_DIGITS["XAU"]
     elif "JPY" in sym:
         digits = PIP_DIGITS["JPY"]
     else:
         digits = PIP_DIGITS["default"]
     return 10 ** -digits
+
+
+def get_symbol_filling_modes(info) -> list[int]:
+    """
+    Return an ordered list of MT5 order filling modes supported by the broker for this symbol.
+    info.filling_mode bitmask:
+      - bit 0 (1): SYMBOL_FILLING_FOK -> mt5.ORDER_FILLING_FOK (0)
+      - bit 1 (2): SYMBOL_FILLING_IOC -> mt5.ORDER_FILLING_IOC (1)
+    """
+    modes = []
+    filling_flags = getattr(info, "filling_mode", 0)
+    if filling_flags & 1:  # SYMBOL_FILLING_FOK
+        modes.append(mt5.ORDER_FILLING_FOK)
+    if filling_flags & 2:  # SYMBOL_FILLING_IOC
+        modes.append(mt5.ORDER_FILLING_IOC)
+    
+    # Always append fallbacks
+    for alt in (mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
+        if alt not in modes:
+            modes.append(alt)
+    return modes
 
 
 def _symbol_info(symbol: str):
@@ -82,16 +110,18 @@ def _symbol_info(symbol: str):
 def place_order(
     symbol: str,
     signal: int,            # 1 = buy, -1 = sell
-    entry_price: float,     # mother bar high (buy) or low (sell)
-    sl_pips: float,
-    tp_pips: float,
-    account_balance: float,
-    risk_pct: float,
-    comment: str = "EquantEdge IB",
+    entry_price: float,     # entry level
+    sl_pips: float | None = None,
+    tp_pips: float | None = None,
+    account_balance: float = 10000.0,
+    risk_pct: float = 1.0,
+    comment: str = "EquantEdge LS",
     session: str | None = None,
     ema_50: float | None = None,
     mother_high: float | None = None,
     mother_low: float | None = None,
+    sl_price: float | None = None,
+    tp_price: float | None = None,
 ) -> int | None:
     """
     Place a market order in the direction of `signal`.
@@ -99,16 +129,18 @@ def place_order(
     Parameters
     ----------
     signal          : 1 (buy) or -1 (sell)
-    entry_price     : used only for SL/TP calculation; actual fill is at market
-    sl_pips         : stop-loss distance in pips
-    tp_pips         : take-profit distance in pips
+    entry_price     : reference trigger price
+    sl_pips         : stop-loss distance in pips (optional if sl_price is given)
+    tp_pips         : take-profit distance in pips (optional if tp_price is given)
     account_balance : current account balance for lot sizing
     risk_pct        : fraction of balance to risk (e.g. 1.0 = 1%)
     comment         : MT5 order comment
     session         : active trading session name (e.g. 'New York')
     ema_50          : EMA indicator snapshot at signal
-    mother_high     : mother bar high level
-    mother_low      : mother bar low level
+    mother_high     : prior candle high level
+    mother_low      : prior candle low level
+    sl_price        : exact stop loss price (overrides sl_pips if provided)
+    tp_price        : exact take profit price (overrides tp_pips if provided)
 
     Returns
     -------
@@ -121,24 +153,41 @@ def place_order(
         print(f"{_log_prefix()} ERROR: could not get tick for {symbol}")
         return None
 
-    # Use current market price, not the pending breakout level
+    # Use current market price
     if signal == 1:          # BUY
-        price    = tick.ask
-        sl       = round(price - sl_pips * pip, info.digits)
-        tp       = round(price + tp_pips * pip, info.digits)
+        price = tick.ask
         order_type = mt5.ORDER_TYPE_BUY
+        if sl_price is not None:
+            sl = round(sl_price, info.digits)
+        else:
+            sl = round(price - (sl_pips or 50.0) * pip, info.digits)
+            
+        if tp_price is not None:
+            tp = round(tp_price, info.digits)
+        else:
+            tp = round(price + (tp_pips or 100.0) * pip, info.digits)
     else:                    # SELL
-        price    = tick.bid
-        sl       = round(price + sl_pips * pip, info.digits)
-        tp       = round(price - tp_pips * pip, info.digits)
+        price = tick.bid
         order_type = mt5.ORDER_TYPE_SELL
+        if sl_price is not None:
+            sl = round(sl_price, info.digits)
+        else:
+            sl = round(price + (sl_pips or 50.0) * pip, info.digits)
+
+        if tp_price is not None:
+            tp = round(tp_price, info.digits)
+        else:
+            tp = round(price - (tp_pips or 100.0) * pip, info.digits)
+
+    effective_sl_pips = abs(price - sl) / pip if pip > 0 else (sl_pips or 50.0)
+    effective_sl_pips = max(1.0, effective_sl_pips)
 
     # Position sizing
     pip_value = info.trade_tick_value * (pip / info.point)
     lot_size  = calculate_lot_size(
         account_balance = account_balance,
         risk_pct        = risk_pct,
-        sl_pips         = sl_pips,
+        sl_pips         = effective_sl_pips,
         pip_value       = pip_value,
         min_lot         = info.volume_min,
         max_lot         = info.volume_max,
@@ -177,30 +226,6 @@ def place_order(
         print(f"{_log_prefix()} DRY RUN — order NOT sent.")
         return -1   # sentinel for dry-run "success"
 
-    # Determine broker filling mode
-    filling_mode = mt5.ORDER_FILLING_IOC
-    if info.filling_mode & mt5.ORDER_FILLING_IOC:
-        filling_mode = mt5.ORDER_FILLING_IOC
-    elif info.filling_mode & mt5.ORDER_FILLING_RETURN:
-        filling_mode = mt5.ORDER_FILLING_RETURN
-    elif info.filling_mode & mt5.ORDER_FILLING_FOK:
-        filling_mode = mt5.ORDER_FILLING_FOK
-
-    request = {
-        "action":     mt5.TRADE_ACTION_DEAL,
-        "symbol":     symbol,
-        "volume":     lot_size,
-        "type":       order_type,
-        "price":      price,
-        "sl":         sl,
-        "tp":         tp,
-        "deviation":  20,           # max price deviation in points
-        "magic":      20260816,     # unique EA identifier
-        "comment":    comment,
-        "type_time":  mt5.ORDER_TIME_GTC,
-        "type_filling": filling_mode,
-    }
-
     SUCCESS_RETCODES = (
         mt5.TRADE_RETCODE_DONE,           # 10009: Request completed
         mt5.TRADE_RETCODE_PLACED,         # 10008: Order placed
@@ -208,7 +233,35 @@ def place_order(
         0,                                # 0: Done / Success
     )
 
-    result = mt5.order_send(request)
+    # Try supported filling modes with automatic fallback
+    candidate_modes = get_symbol_filling_modes(info)
+    result = None
+    
+    for mode in candidate_modes:
+        request = {
+            "action":       mt5.TRADE_ACTION_DEAL,
+            "symbol":       symbol,
+            "volume":       lot_size,
+            "type":         order_type,
+            "price":        price,
+            "sl":           sl,
+            "tp":           tp,
+            "deviation":    20,           # max price deviation in points
+            "magic":        20260816,     # unique EA identifier
+            "comment":      comment,
+            "type_time":    mt5.ORDER_TIME_GTC,
+            "type_filling": mode,
+        }
+
+        result = mt5.order_send(request)
+        if result is not None and (result.retcode in SUCCESS_RETCODES or getattr(result, "order", 0) > 0):
+            break  # Successfully filled
+        elif result is not None and result.retcode == 10030:
+            # Unsupported filling mode, try next candidate mode
+            continue
+        else:
+            break
+
     is_success = result is not None and (
         result.retcode in SUCCESS_RETCODES or (getattr(result, "order", 0) > 0)
     )
@@ -271,31 +324,36 @@ def close_position(ticket: int, symbol: str, comment: str = "EquantEdge close") 
 
     # Determine broker filling mode
     info = _symbol_info(symbol)
-    filling_mode = mt5.ORDER_FILLING_IOC
-    if info.filling_mode & mt5.ORDER_FILLING_IOC:
-        filling_mode = mt5.ORDER_FILLING_IOC
-    elif info.filling_mode & mt5.ORDER_FILLING_RETURN:
-        filling_mode = mt5.ORDER_FILLING_RETURN
-    elif info.filling_mode & mt5.ORDER_FILLING_FOK:
-        filling_mode = mt5.ORDER_FILLING_FOK
+    candidate_modes = get_symbol_filling_modes(info)
+    result = None
 
-    request = {
-        "action":     mt5.TRADE_ACTION_DEAL,
-        "symbol":     symbol,
-        "volume":     pos.volume,
-        "type":       close_type,
-        "position":   ticket,
-        "price":      close_price,
-        "deviation":  20,
-        "magic":      20260816,
-        "comment":    comment,
-        "type_time":  mt5.ORDER_TIME_GTC,
-        "type_filling": filling_mode,
-    }
+    SUCCESS_RETCODES = (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED, mt5.TRADE_RETCODE_DONE_PARTIAL, 0)
 
-    result = mt5.order_send(request)
+    for mode in candidate_modes:
+        request = {
+            "action":       mt5.TRADE_ACTION_DEAL,
+            "symbol":       symbol,
+            "volume":       pos.volume,
+            "type":         close_type,
+            "position":     ticket,
+            "price":        close_price,
+            "deviation":    20,
+            "magic":        20260816,
+            "comment":      comment,
+            "type_time":    mt5.ORDER_TIME_GTC,
+            "type_filling": mode,
+        }
+
+        result = mt5.order_send(request)
+        if result is not None and (result.retcode in SUCCESS_RETCODES or getattr(result, "order", 0) > 0 or getattr(result, "deal", 0) > 0):
+            break
+        elif result is not None and result.retcode == 10030:
+            continue
+        else:
+            break
+
     is_success = result is not None and (
-        result.retcode in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED, mt5.TRADE_RETCODE_DONE_PARTIAL, 0)
+        result.retcode in SUCCESS_RETCODES
         or (getattr(result, "order", 0) > 0) or (getattr(result, "deal", 0) > 0)
     )
     if not is_success:
@@ -319,7 +377,47 @@ def close_position(ticket: int, symbol: str, comment: str = "EquantEdge close") 
     return True
 
 
+def modify_position_sl(ticket: int, symbol: str, new_sl: float) -> bool:
+    """
+    Modify the stop loss of an existing open position in MT5 (e.g. moving to Breakeven).
+    """
+    if DRY_RUN:
+        print(f"{_log_prefix()} [DRY RUN] Would modify SL for position #{ticket} to {new_sl}")
+        return True
+
+    position = mt5.positions_get(ticket=ticket)
+    if not position:
+        return False
+
+    pos = position[0]
+    info = _symbol_info(symbol)
+    sl_rounded = round(new_sl, info.digits)
+
+    request = {
+        "action":   mt5.TRADE_ACTION_SLTP,
+        "position": ticket,
+        "symbol":   symbol,
+        "sl":       sl_rounded,
+        "tp":       pos.tp,
+    }
+
+    result = mt5.order_send(request)
+    is_success = result is not None and result.retcode in (
+        mt5.TRADE_RETCODE_DONE,
+        mt5.TRADE_RETCODE_PLACED,
+        0,
+    )
+    if is_success:
+        print(f"{_log_prefix()} Position #{ticket} SL updated to {sl_rounded} (Breakeven Trailed)")
+        return True
+    else:
+        code = result.retcode if result else "None"
+        print(f"{_log_prefix()} Failed to modify SL for #{ticket}: retcode={code} comment={getattr(result, 'comment', 'N/A')}")
+        return False
+
+
 def get_open_positions(symbol: str | None = None) -> list:
     """Return a list of open positions, optionally filtered by symbol."""
     positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
     return list(positions) if positions else []
+
