@@ -46,8 +46,9 @@ MA_PERIOD       = 50       # Fast dynamic target Moving Average
 MA_TYPE         = "EMA"    # 'EMA' or 'SMA'
 HTF_EMA_PERIOD  = 200      # Higher Timeframe Trend EMA
 SWING_WINDOW    = 10       # Lookback window for structural swing prominence
-RR_RATIO        = 1.5      # High-win-rate 1:1.5 Risk-to-Reward ratio
+RR_RATIO        = 2.0      # Institutional 1:2.0 Risk-to-Reward ratio
 PIP_BUFFER      = 1.0      # Minimum pip buffer floor
+
 ATR_BUFFER_MULT = 0.35     # Dynamic ATR stop loss buffer multiplier
 DEFAULT_PIP     = 0.01     # Default pip size (0.01 for XAUUSD/JPY, 0.0001 for Forex)
 

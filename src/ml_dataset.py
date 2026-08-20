@@ -150,6 +150,7 @@ def build_dataset_from_mt5(
     symbols: list[str] | str = ("GBPUSD", "XAUUSD", "EURUSD"),
     timeframe: int = 1,  # M1 (1-minute)
     num_candles: int = 50000,
+    rr_ratio: float = 1.5,
     output_path: str = "data/sweep_ml_dataset.csv",
 ) -> pd.DataFrame:
     """
@@ -171,7 +172,7 @@ def build_dataset_from_mt5(
     if isinstance(symbols, str):
         symbols = [s.strip() for s in symbols.split(",") if s.strip()]
 
-    print(f"[Dataset] Connecting to MT5. Processing symbols: {symbols} on M{timeframe} ({num_candles} candles each)...")
+    print(f"[Dataset] Connecting to MT5. Processing symbols: {symbols} on M{timeframe} ({num_candles} candles each, 1:{rr_ratio:.1f} RR)...")
     connect()
 
     all_frames = []
@@ -192,7 +193,7 @@ def build_dataset_from_mt5(
                 continue
 
             print(f"[Dataset] Fetched {len(df_candles)} candles for {sym} ({actual_sym}). Labeling setups...")
-            sym_dataset = label_signals_triple_barrier(df_candles, symbol=sym)
+            sym_dataset = label_signals_triple_barrier(df_candles, symbol=sym, rr_ratio=rr_ratio)
             if not sym_dataset.empty:
                 all_frames.append(sym_dataset)
                 wins = (sym_dataset["target"] == 1).sum()
@@ -225,6 +226,7 @@ if __name__ == "__main__":
     parser.add_argument("--symbols", type=str, default="GBPUSD,XAUUSD,EURUSD", help="Comma-separated symbols (e.g. GBPUSD,XAUUSD,EURUSD)")
     parser.add_argument("--tf", type=int, default=1, help="Timeframe in minutes (1, 3, 5, 15)")
     parser.add_argument("--candles", type=int, default=50000, help="Number of historical candles to fetch per symbol")
+    parser.add_argument("--rr", type=float, default=1.5, help="Risk to reward ratio (e.g. 1.5, 2.0)")
     parser.add_argument("--out", type=str, default="data/sweep_ml_dataset.csv", help="Output CSV path")
     args = parser.parse_args()
 
@@ -233,8 +235,6 @@ if __name__ == "__main__":
         symbols=args.symbols,
         timeframe=args.tf,
         num_candles=args.candles,
+        rr_ratio=args.rr,
         output_path=args.out,
     )
-
-
-
