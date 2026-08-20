@@ -150,7 +150,7 @@ def build_dataset_from_mt5(
     symbols: list[str] | str = ("GBPUSD", "XAUUSD", "EURUSD"),
     timeframe: int = 1,  # M1 (1-minute)
     num_candles: int = 50000,
-    rr_ratio: float = 1.5,
+    rr_ratio: float = 2.0,
     output_path: str = "data/sweep_ml_dataset.csv",
 ) -> pd.DataFrame:
     """
@@ -226,7 +226,7 @@ if __name__ == "__main__":
     parser.add_argument("--symbols", type=str, default="GBPUSD,XAUUSD,EURUSD", help="Comma-separated symbols (e.g. GBPUSD,XAUUSD,EURUSD)")
     parser.add_argument("--tf", type=int, default=1, help="Timeframe in minutes (1, 3, 5, 15)")
     parser.add_argument("--candles", type=int, default=50000, help="Number of historical candles to fetch per symbol")
-    parser.add_argument("--rr", type=float, default=1.5, help="Risk to reward ratio (e.g. 1.5, 2.0)")
+    parser.add_argument("--rr", type=float, default=2.0, help="Risk to reward ratio (e.g. 1.5, 2.0)")
     parser.add_argument("--out", type=str, default="data/sweep_ml_dataset.csv", help="Output CSV path")
     args = parser.parse_args()
 

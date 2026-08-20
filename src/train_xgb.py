@@ -103,17 +103,18 @@ def train_model(
     oof_p = oof_probs[valid_oof_mask]
 
     print("\n" + "="*70)
-    print(f"{'THRESHOLD':<12} | {'TRADES TAKEN':<14} | {'WIN RATE':<12} | {'EXPECTANCY (1:1.5 RR)':<20}")
+    print(f"{'THRESHOLD':<12} | {'TRADES TAKEN':<14} | {'WIN RATE':<12} | {'EXPECTANCY (2.0 RR)':<20}")
     print("-" * 70)
     for thresh in (0.45, 0.50, 0.55, 0.60, 0.65, 0.70):
         sel = oof_p >= thresh
         if sel.sum() > 0:
             wr = float(oof_y[sel].mean() * 100)
-            ev = (wr / 100.0 * 1.5) - ((100.0 - wr) / 100.0 * 1.0)
+            ev = (wr / 100.0 * 2.0) - ((100.0 - wr) / 100.0 * 1.0)
             print(f"p >= {thresh:.2f}    | {sel.sum():<5} ({sel.mean()*100:4.1f}%)   | {wr:5.1f}%      | {ev:+.2f}R / trade")
         else:
             print(f"p >= {thresh:.2f}    | 0 trades      | N/A         | N/A")
     print("="*70 + "\n")
+
 
 
     # Train final production model on full dataset
