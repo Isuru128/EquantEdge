@@ -216,15 +216,16 @@ def generate_signals(
         df.loc[buy_mask, "sl_pips"]       = risk_buy / pip_size
         df.loc[buy_mask, "tp_pips"]       = (risk_buy * rr_ratio) / pip_size
 
-    # Human-readable labels
+    # Human-readable labels (Fixed 1:1.5 RR)
     label_map = {
-        1: f"BUY Liquidity Sweep (1:{rr_ratio:.1f} RR / Target MA)",
-        -1: f"SELL Liquidity Sweep (1:{rr_ratio:.1f} RR / Target MA)",
+        1: f"BUY Liquidity Sweep (1:{rr_ratio:.1f} RR)",
+        -1: f"SELL Liquidity Sweep (1:{rr_ratio:.1f} RR)",
         0: "",
     }
     df["signal_label"] = df["signal"].map(label_map)
 
     return df
+
 
 
 

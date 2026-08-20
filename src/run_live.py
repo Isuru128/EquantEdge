@@ -141,11 +141,11 @@ def print_signal(symbol: str, sig: dict) -> None:
         f"  Entry Price   : {sig['entry_price']}\n"
         f"  Stop Loss     : {sig['sl_price']} ({sig.get('sl_pips', 0):.1f} pips/pts)\n"
         f"  Take Profit   : {sig['tp_price']} ({sig.get('tp_pips', 0):.1f} pips/pts, 1:1.5 R:R)\n"
-        f"  Target MA     : {sig.get('target_ma', 'N/A')}\n"
         f"  ML Confidence : {sig.get('xgb_prob', 'N/A')}\n"
         f"  Prev Bar H/L  : High={sig.get('prev_high')}, Low={sig.get('prev_low')}, Open={sig.get('prev_open')}\n"
         f"{'='*65}\n"
     )
+
 
 
 
