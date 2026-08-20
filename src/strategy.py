@@ -53,8 +53,9 @@ ATR_BUFFER_MULT = 0.35     # Dynamic ATR stop loss buffer multiplier
 DEFAULT_PIP     = 0.01     # Default pip size (0.01 for XAUUSD/JPY, 0.0001 for Forex)
 
 ML_MODEL_PATH           = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "xgb_sweep_model.pkl")
-ML_CONFIDENCE_THRESHOLD = 0.55  # Minimum model win probability required to take trade
+ML_CONFIDENCE_THRESHOLD = 0.50  # Minimum model win probability required to take trade (p >= 0.50)
 USE_ML_FILTER           = True  # Auto-filter trades when ML model artifact is present
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 

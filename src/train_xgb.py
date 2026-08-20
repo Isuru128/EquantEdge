@@ -26,8 +26,9 @@ def train_model(
     dataset_path: str = "data/sweep_ml_dataset.csv",
     model_output_path: str = "models/xgb_sweep_model.pkl",
     meta_output_path: str = "models/xgb_metadata.json",
-    confidence_threshold: float = 0.55,
+    confidence_threshold: float = 0.50,
 ) -> dict:
+
     """
     Train XGBoost model on labeled sweep dataset and export serialized artifacts.
     """
@@ -174,8 +175,9 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, default="data/sweep_ml_dataset.csv", help="Path to labeled dataset CSV")
     parser.add_argument("--out", type=str, default="models/xgb_sweep_model.pkl", help="Path to output model file")
     parser.add_argument("--meta", type=str, default="models/xgb_metadata.json", help="Path to output metadata JSON")
-    parser.add_argument("--threshold", type=float, default=0.55, help="Confidence threshold for trade execution")
+    parser.add_argument("--threshold", type=float, default=0.50, help="Confidence threshold for trade execution")
     args = parser.parse_args()
+
 
     train_model(
         dataset_path=args.dataset,
