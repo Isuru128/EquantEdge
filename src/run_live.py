@@ -258,8 +258,9 @@ def main() -> None:
                 if df.empty:
                     continue
 
-                sig = get_latest_signal(df, use_ml=True)
+                sig = get_latest_signal(df, symbol=actual_sym, use_ml=True)
                 bar_time = sig.get("datetime")
+
 
                 if bar_time != last_seen_bars.get(sym):
                     last_seen_bars[sym] = bar_time

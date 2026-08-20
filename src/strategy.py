@@ -128,6 +128,21 @@ def _detect_pip_size(
         return 0.0001
 
 
+def _get_symbol_pip_buffer(symbol: str | None = None) -> float:
+    """
+    Return symbol-specific SL pip buffer:
+    - XAUUSD / Gold: 1.0 pip (2nd candle high/low + 1.0 pip)
+    - Other symbols (EURUSD, GBPUSD, etc.): 0.5 pip (2nd candle high/low + 0.5 pip)
+    """
+    if symbol:
+        sym = str(symbol).upper()
+        if "XAU" in sym or "GOLD" in sym:
+            return 1.0
+        else:
+            return 0.5
+    return 0.5
+
+
 def generate_signals(
     df: pd.DataFrame,
     ma_period: int = MA_PERIOD,
@@ -135,13 +150,13 @@ def generate_signals(
     swing_window: int = SWING_WINDOW,
     ma_type: str = MA_TYPE,
     rr_ratio: float = RR_RATIO,
-    pip_buffer: float = PIP_BUFFER,
+    pip_buffer: float | None = None,
     atr_buffer_mult: float = ATR_BUFFER_MULT,
     pip_size: float | None = None,
     symbol: str | None = None,
 ) -> pd.DataFrame:
     """
-    Run the Liquidity Sweep Reversal strategy with swing prominence and dynamic ATR SL buffer.
+    Run the Liquidity Sweep Reversal strategy with symbol-specific SL buffer (1.0 pip for XAUUSD, 0.5 pip for other pairs).
     """
     df = add_ma(df, period=ma_period, ma_type=ma_type)
     htf_col = f"ema_{htf_period}"
@@ -153,17 +168,11 @@ def generate_signals(
     if pip_size is None:
         pip_size = _detect_pip_size(df, symbol=symbol)
 
-    # Compute ATR-14 if not already present
-    if "atr_14" not in df:
-        prev_close = df["close"].shift(1)
-        tr1 = df["high"] - df["low"]
-        tr2 = (df["high"] - prev_close).abs()
-        tr3 = (df["low"] - prev_close).abs()
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        df["atr_14"] = tr.rolling(window=14, min_periods=1).mean().fillna(pip_size * 5)
+    if pip_buffer is None:
+        pip_buffer = _get_symbol_pip_buffer(symbol)
 
-    # Dynamic ATR buffer with floor
-    buffer_amount = np.maximum(pip_buffer * pip_size, atr_buffer_mult * df["atr_14"])
+    # Buffer amount in absolute price units (e.g. 1.0 * 0.01 = 0.01 for XAUUSD; 0.5 * 0.0001 = 0.00005 for EURUSD)
+    buffer_amount = pip_buffer * pip_size
 
     # 1. Pattern Detection with Swing Prominence
     df["sweep_sell"] = is_liquidity_sweep_sell(df, swing_window=swing_window)
@@ -195,7 +204,7 @@ def generate_signals(
     # ── Sell Signal Calculations ───────────────────────────────────────────────
     sell_mask = df["signal"] == -1
     if sell_mask.any():
-        sl_sell = df.loc[sell_mask, "high"] + buffer_amount[sell_mask]
+        sl_sell = df.loc[sell_mask, "high"] + buffer_amount
         risk_sell = sl_sell - df.loc[sell_mask, "close"]
         tp_sell = df.loc[sell_mask, "close"] - (risk_sell * rr_ratio)
 
@@ -208,7 +217,7 @@ def generate_signals(
     # ── Buy Signal Calculations ────────────────────────────────────────────────
     buy_mask = df["signal"] == 1
     if buy_mask.any():
-        sl_buy = df.loc[buy_mask, "low"] - buffer_amount[buy_mask]
+        sl_buy = df.loc[buy_mask, "low"] - buffer_amount
         risk_buy = df.loc[buy_mask, "close"] - sl_buy
         tp_buy = df.loc[buy_mask, "close"] + (risk_buy * rr_ratio)
 
@@ -218,7 +227,7 @@ def generate_signals(
         df.loc[buy_mask, "sl_pips"]       = risk_buy / pip_size
         df.loc[buy_mask, "tp_pips"]       = (risk_buy * rr_ratio) / pip_size
 
-    # Human-readable labels (Fixed 1:1.5 RR)
+    # Human-readable labels (Fixed 1:2.0 RR)
     label_map = {
         1: f"BUY Liquidity Sweep (1:{rr_ratio:.1f} RR)",
         -1: f"SELL Liquidity Sweep (1:{rr_ratio:.1f} RR)",
@@ -233,10 +242,11 @@ def generate_signals(
 
 def get_latest_signal(
     df: pd.DataFrame,
+    symbol: str | None = None,
     ma_period: int = MA_PERIOD,
     ma_type: str = MA_TYPE,
     rr_ratio: float = RR_RATIO,
-    pip_buffer: float = PIP_BUFFER,
+    pip_buffer: float | None = None,
     pip_size: float | None = None,
     use_ml: bool = USE_ML_FILTER,
     confidence_threshold: float = ML_CONFIDENCE_THRESHOLD,
@@ -250,12 +260,14 @@ def get_latest_signal(
 
     df = generate_signals(
         df,
+        symbol=symbol,
         ma_period=ma_period,
         ma_type=ma_type,
         rr_ratio=rr_ratio,
         pip_buffer=pip_buffer,
         pip_size=pip_size,
     )
+
     
     # Use the last fully closed candle (iloc[-2])
     bar = df.iloc[-2]
