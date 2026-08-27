@@ -1,32 +1,36 @@
 """
 strategy.py
 
-Liquidity Sweep Reversal Strategy with Moving Average Dynamic Target & Filter.
+15-Minute Fair Value Gap (FVG) + 1-Minute Market Structure Shift (MSS) Trading Strategy.
 
-Strategy Rules:
----------------
-1. SELL ENTRY (Bearish Liquidity Sweep):
-   - Candle 1 (t-1): Bullish candle (close > open).
-   - Candle 2 (t): Bearish candle (close < open).
-   - Liquidity Taken: Bearish candle's High > Bullish candle's High (swept the top).
-   - Close Confirmation: Bearish candle closes strictly below Bullish candle's Open.
-   - Trend / MA Filter: Moving Average is BELOW the entry price (MA < close).
-   - Stop Loss: 1 pip above the Bear candle's High (for broker spread buffer).
-   - Target / Take Profit: 1:2 Risk-to-Reward ratio OR on-time Moving Average price (close when tapping MA).
+Strategy Blueprint:
+-------------------
+1. 15-Minute Fair Value Gaps (FVG):
+   - Bearish FVG (for Sell): 3-bar sequence on M15 where Candle 1 Low > Candle 3 High.
+   - Bullish FVG (for Buy): 3-bar sequence on M15 where Candle 1 High < Candle 3 Low.
+   - Max Lookback: Up to 96 15M candles (24 hours).
 
-2. BUY ENTRY (Bullish Liquidity Sweep - Mirror):
-   - Candle 1 (t-1): Bearish candle (close < open).
-   - Candle 2 (t): Bullish candle (close > open).
-   - Liquidity Taken: Bullish candle's Low < Bearish candle's Low (swept the bottom).
-   - Close Confirmation: Bullish candle closes strictly above Bearish candle's Open.
-   - Trend / MA Filter: Moving Average is ABOVE the entry price (MA > close).
-   - Stop Loss: 1 pip below the Bull candle's Low (for broker spread buffer).
-   - Target / Take Profit: 1:2 Risk-to-Reward ratio OR on-time Moving Average price (close when tapping MA).
+2. 1-Minute Market Structure Shift (MSS) Trigger:
+   - SELL SCENARIO:
+     - Price enters/touches an active 15M Bearish FVG zone.
+     - On M1, price prints a bullish leg establishing a swing peak (high of last bullish leg).
+     - A 1-minute candle closes strictly BELOW the lowest price of the last bullish leg (Market Structure Shift).
+     - Order Entry: Limit order / level at the broken swing low (shift price).
+     - Stop Loss: Swing high of the last bullish leg (peak high).
+     - Take Profit: Exact 1:2.0 Risk-to-Reward ratio (2.0 * Risk).
+     - Risk: 1.0% account balance per trade.
 
-Signal Column Values:
-    1 = BUY signal confirmed
-   -1 = SELL signal confirmed
-    0 = No signal
+   - BUY SCENARIO (Mirror):
+     - Price enters/touches an active 15M Bullish FVG zone.
+     - On M1, price prints a bearish leg establishing a swing valley (low of last bearish leg).
+     - A 1-minute candle closes strictly ABOVE the highest price of the last bearish leg (Market Structure Shift).
+     - Order Entry: Limit order / level at the broken swing high (shift price).
+     - Stop Loss: Swing low of the last bearish leg (valley low).
+     - Take Profit: Exact 1:2.0 Risk-to-Reward ratio (2.0 * Risk).
+     - Risk: 1.0% account balance per trade.
+
+3. Target Assets: EURUSD, GBPUSD, AUDUSD.
+4. Trading Session Restriction: No trades executed between 14:00 - 20:00 NY time (UTC-4 / UTC-5).
 """
 
 import os
@@ -36,26 +40,22 @@ import pandas as pd
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from src.patterns import is_liquidity_sweep_sell, is_liquidity_sweep_buy
+    from src.patterns import find_15m_fvgs, get_nearest_active_fvg, detect_market_structure_shift
 else:
-    from .patterns import is_liquidity_sweep_sell, is_liquidity_sweep_buy
+    from .patterns import find_15m_fvgs, get_nearest_active_fvg, detect_market_structure_shift
 
 
 # ── Strategy Parameters ────────────────────────────────────────────────────────
-MA_PERIOD       = 50       # Fast dynamic target Moving Average
-MA_TYPE         = "EMA"    # 'EMA' or 'SMA'
-HTF_EMA_PERIOD  = 200      # Higher Timeframe Trend EMA
-SWING_WINDOW    = 10       # Lookback window for structural swing prominence
-RR_RATIO        = 2.0      # Institutional 1:2.0 Risk-to-Reward ratio
-PIP_BUFFER      = 1.0      # Minimum pip buffer floor
+STRATEGY_NAME           = "15M FVG + 1M Market Structure Shift (MSS)"
+SUPPORTED_SYMBOLS       = ["EURUSD", "GBPUSD", "AUDUSD"]
+MAX_FVG_LOOKBACK_BARS   = 96        # Max 96 15M candles (24 hours lookback for FVG)
+RR_RATIO                = 2.0       # Institutional 1:2.0 Risk-to-Reward ratio
+RISK_PERCENT            = 1.0       # 1.0% risk per trade
+DEFAULT_PIP             = 0.0001    # 0.0001 for EURUSD, GBPUSD, AUDUSD
 
-ATR_BUFFER_MULT = 0.35     # Dynamic ATR stop loss buffer multiplier
-DEFAULT_PIP     = 0.01     # Default pip size (0.01 for XAUUSD/JPY, 0.0001 for Forex)
-
-ML_MODEL_PATH           = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "xgb_sweep_model.pkl")
-ML_CONFIDENCE_THRESHOLD = 0.50  # Minimum model win probability required to take trade (p >= 0.50)
-USE_ML_FILTER           = True  # Auto-filter trades when ML model artifact is present
-
+ML_MODEL_PATH           = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "xgb_strategy_model.pkl")
+ML_CONFIDENCE_THRESHOLD = 0.50
+USE_ML_FILTER           = True
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -64,7 +64,7 @@ _ml_model_loaded = False
 
 
 def get_ml_model():
-    """Lazily load and cache the trained XGBoost model artifact."""
+    """Lazily load and cache the trained ML filter artifact."""
     global _ml_model_cache, _ml_model_loaded
     if _ml_model_loaded:
         return _ml_model_cache
@@ -74,7 +74,7 @@ def get_ml_model():
         try:
             import joblib
             _ml_model_cache = joblib.load(ML_MODEL_PATH)
-            print(f"[Strategy] Loaded XGBoost ML Filter model from {ML_MODEL_PATH}")
+            print(f"[Strategy] Loaded ML Filter model from {ML_MODEL_PATH}")
         except Exception as exc:
             print(f"[Strategy] Warning: Could not load ML model: {exc}")
             _ml_model_cache = None
@@ -83,257 +83,320 @@ def get_ml_model():
     return _ml_model_cache
 
 
-def add_ma(df: pd.DataFrame, period: int = MA_PERIOD, ma_type: str = MA_TYPE) -> pd.DataFrame:
-    """
-    Append a Moving Average column (EMA or SMA) to the dataframe.
-    """
-    df = df.copy()
-    col_name = f"ma_{period}"
-    if ma_type.upper() == "EMA":
-        df[col_name] = df["close"].ewm(span=period, adjust=False).mean()
-    else:
-        df[col_name] = df["close"].rolling(window=period).mean()
-    return df
-
-
 def _detect_pip_size(
-    df: pd.DataFrame,
+    df: pd.DataFrame | None = None,
     symbol: str | None = None,
     default_pip: float = DEFAULT_PIP,
 ) -> float:
-    """
-    Auto-detect pip/point size for US30, Gold, Forex majors (EURUSD, GBPUSD), etc.
-    """
+    """Auto-detect pip size for FX pairs (EURUSD, GBPUSD, AUDUSD = 0.0001)."""
     if symbol:
         sym = str(symbol).upper()
         if any(k in sym for k in ("US30", "DJI", "WS30")):
             return 1.0
-        elif "XAU" in sym or "XAG" in sym:
+        elif "XAU" in sym or "XAG" in sym or "JPY" in sym:
             return 0.01
-        elif "JPY" in sym:
-            return 0.01
-        elif any(k in sym for k in ("EUR", "GBP", "AUD", "NZD", "USD")):
+        elif any(k in sym for k in ("EUR", "GBP", "AUD", "NZD", "USD", "CHF", "CAD")):
             return 0.0001
 
-    if "close" not in df or df.empty:
-        return default_pip
-    avg_price = df["close"].dropna().iloc[-1] if len(df["close"].dropna()) > 0 else 0
-    if avg_price > 10000:  # e.g., US30 / Dow Jones (~35,000-45,000) -> 1.0 point
-        return 1.0
-    elif avg_price > 500:  # e.g., Gold XAUUSD (~2000-4500) -> 0.01
-        return 0.01
-    elif avg_price > 50:  # e.g., JPY pairs (~100-160) -> 0.01
-        return 0.01
-    else:  # e.g., EURUSD (~1.08), GBPUSD (~1.27) -> 0.0001
-        return 0.0001
-
-
-def _get_symbol_pip_buffer(symbol: str | None = None) -> float:
-    """
-    Return symbol-specific SL pip buffer:
-    - XAUUSD / Gold: 1.0 pip (2nd candle high/low + 1.0 pip)
-    - Other symbols (EURUSD, GBPUSD, etc.): 0.5 pip (2nd candle high/low + 0.5 pip)
-    """
-    if symbol:
-        sym = str(symbol).upper()
-        if "XAU" in sym or "GOLD" in sym:
+    if df is not None and "close" in df and not df.empty:
+        avg_price = df["close"].dropna().iloc[-1] if len(df["close"].dropna()) > 0 else 0
+        if avg_price > 10000:
             return 1.0
+        elif avg_price > 50:
+            return 0.01
         else:
-            return 0.5
-    return 0.5
+            return 0.0001
+
+    return default_pip
+
+
+def resample_1m_to_15m(df_1m: pd.DataFrame) -> pd.DataFrame:
+    """
+    Resample 1-minute OHLC DataFrame into 15-minute candles.
+    """
+    if df_1m.empty:
+        return pd.DataFrame()
+
+    df = df_1m.copy()
+    if "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"])
+        df.set_index("datetime", inplace=True)
+
+    agg_dict = {
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+    }
+    if "volume" in df.columns:
+        agg_dict["volume"] = "sum"
+
+    df_15m = df.resample("15min").agg(agg_dict).dropna().reset_index()
+    return df_15m
 
 
 def generate_signals(
-    df: pd.DataFrame,
-    ma_period: int = MA_PERIOD,
-    htf_period: int = HTF_EMA_PERIOD,
-    swing_window: int = SWING_WINDOW,
-    ma_type: str = MA_TYPE,
-    rr_ratio: float = RR_RATIO,
-    pip_buffer: float | None = None,
-    atr_buffer_mult: float = ATR_BUFFER_MULT,
-    pip_size: float | None = None,
+    df_1m: pd.DataFrame,
+    df_15m: pd.DataFrame | None = None,
     symbol: str | None = None,
+    rr_ratio: float = RR_RATIO,
+    pip_size: float | None = None,
+    max_fvg_lookback: int = MAX_FVG_LOOKBACK_BARS,
 ) -> pd.DataFrame:
     """
-    Run the Liquidity Sweep Reversal strategy with symbol-specific SL buffer (1.0 pip for XAUUSD, 0.5 pip for other pairs).
+    Scan historical DataFrame and generate 15M FVG + 1M MSS signals across all candles.
     """
-    df = add_ma(df, period=ma_period, ma_type=ma_type)
-    htf_col = f"ema_{htf_period}"
-    if htf_col not in df:
-        df[htf_col] = df["close"].ewm(span=htf_period, adjust=False).mean()
-
-    ma_col = f"ma_{ma_period}"
-
     if pip_size is None:
-        pip_size = _detect_pip_size(df, symbol=symbol)
+        pip_size = _detect_pip_size(df_1m, symbol=symbol)
 
-    if pip_buffer is None:
-        pip_buffer = _get_symbol_pip_buffer(symbol)
+    if df_15m is None or df_15m.empty:
+        df_15m = resample_1m_to_15m(df_1m)
 
-    # Buffer amount in absolute price units (e.g. 1.0 * 0.01 = 0.01 for XAUUSD; 0.5 * 0.0001 = 0.00005 for EURUSD)
-    buffer_amount = pip_buffer * pip_size
+    df_out = df_1m.copy()
+    df_out["signal"] = 0
+    df_out["entry_price"] = np.nan
+    df_out["sl_price"] = np.nan
+    df_out["tp_price"] = np.nan
+    df_out["risk_distance"] = np.nan
+    df_out["sl_pips"] = np.nan
+    df_out["tp_pips"] = np.nan
+    df_out["signal_label"] = ""
+    df_out["fvg_top"] = np.nan
+    df_out["fvg_bottom"] = np.nan
 
-    # 1. Pattern Detection with Swing Prominence
-    df["sweep_sell"] = is_liquidity_sweep_sell(df, swing_window=swing_window)
-    df["sweep_buy"]  = is_liquidity_sweep_buy(df, swing_window=swing_window)
+    n_1m = len(df_1m)
+    if len(df_15m) < 3 or n_1m < 15:
+        return df_out
 
-    # 2. Moving Average Conditions:
-    # - For SELL: MA-50 must be BELOW entry price (close > MA-50)
-    # - For BUY:  MA-50 must be ABOVE entry price (close < MA-50)
-    ma_valid_sell = df["close"] > df[ma_col]
-    ma_valid_buy  = df["close"] < df[ma_col]
+    # 1. Precompute all 15M FVGs
+    all_fvgs = find_15m_fvgs(df_15m, max_lookback_bars=len(df_15m))
+    if not all_fvgs:
+        return df_out
 
-    conditions_sell = df["sweep_sell"] & ma_valid_sell
-    conditions_buy  = df["sweep_buy"] & ma_valid_buy
+    # Build FVG lookup list with timestamp or index for fast evaluation
+    # For each 1M bar, check if price interacts with any active 15M FVG (within 96 M15 bars = 1440 M1 bars)
+    # Group FVGs into Bearish & Bullish
+    bearish_fvgs = [f for f in all_fvgs if f["direction"] == -1]
+    # Extract NumPy arrays for ultra-fast vectorized scanning
+    highs = df_1m["high"].to_numpy(dtype=float)
+    lows = df_1m["low"].to_numpy(dtype=float)
+    closes = df_1m["close"].to_numpy(dtype=float)
+    datetimes = df_1m["datetime"].astype(str).values if "datetime" in df_1m.columns else None
 
-    df["signal"] = 0
-    df.loc[conditions_buy,  "signal"] =  1
-    df.loc[conditions_sell, "signal"] = -1
+    bearish_fvgs = [f for f in all_fvgs if f["direction"] == -1]
+    bullish_fvgs = [f for f in all_fvgs if f["direction"] == 1]
 
-    # Initialize SL / TP columns
-    df["entry_price"]   = df["close"]
-    df["target_ma"]     = df[ma_col]
-    df["htf_trend"]     = (df["close"] > df[htf_col]).map({True: "UP", False: "DOWN"})
-    df["sl_price"]      = np.nan
-    df["tp_price"]      = np.nan
-    df["risk_distance"] = np.nan
-    df["sl_pips"]       = np.nan
-    df["tp_pips"]       = np.nan
+    lookback = 25
+    cooldown_until = 0
 
-    # ── Sell Signal Calculations ───────────────────────────────────────────────
-    sell_mask = df["signal"] == -1
-    if sell_mask.any():
-        sl_sell = df.loc[sell_mask, "high"] + buffer_amount
-        risk_sell = sl_sell - df.loc[sell_mask, "close"]
-        tp_sell = df.loc[sell_mask, "close"] - (risk_sell * rr_ratio)
+    signals = np.zeros(n_1m, dtype=int)
+    entry_prices = np.full(n_1m, np.nan)
+    sl_prices = np.full(n_1m, np.nan)
+    tp_prices = np.full(n_1m, np.nan)
+    risk_distances = np.full(n_1m, np.nan)
+    sl_pips_arr = np.full(n_1m, np.nan)
+    tp_pips_arr = np.full(n_1m, np.nan)
+    fvg_tops = np.full(n_1m, np.nan)
+    fvg_bots = np.full(n_1m, np.nan)
+    labels = [""] * n_1m
 
-        df.loc[sell_mask, "sl_price"]      = sl_sell
-        df.loc[sell_mask, "tp_price"]      = tp_sell
-        df.loc[sell_mask, "risk_distance"] = risk_sell
-        df.loc[sell_mask, "sl_pips"]       = risk_sell / pip_size
-        df.loc[sell_mask, "tp_pips"]       = (risk_sell * rr_ratio) / pip_size
+    for i in range(lookback, n_1m):
+        if i < cooldown_until:
+            continue
 
-    # ── Buy Signal Calculations ────────────────────────────────────────────────
-    buy_mask = df["signal"] == 1
-    if buy_mask.any():
-        sl_buy = df.loc[buy_mask, "low"] - buffer_amount
-        risk_buy = df.loc[buy_mask, "close"] - sl_buy
-        tp_buy = df.loc[buy_mask, "close"] + (risk_buy * rr_ratio)
+        bar_time = datetimes[i] if datetimes is not None else None
+        w_h = highs[i - lookback: i + 1]
+        w_l = lows[i - lookback: i + 1]
+        w_c = closes[i - lookback: i + 1]
+        w_h_max = np.max(w_h)
+        w_l_min = np.min(w_l)
 
-        df.loc[buy_mask, "sl_price"]      = sl_buy
-        df.loc[buy_mask, "tp_price"]      = tp_buy
-        df.loc[buy_mask, "risk_distance"] = risk_buy
-        df.loc[buy_mask, "sl_pips"]       = risk_buy / pip_size
-        df.loc[buy_mask, "tp_pips"]       = (risk_buy * rr_ratio) / pip_size
+        # ── Check Bearish FVGs (Sell Setup) ──────────────────────────────────
+        for fvg in bearish_fvgs:
+            if bar_time and fvg.get("datetime") and fvg["datetime"] >= bar_time:
+                continue
 
-    # Human-readable labels (Fixed 1:2.0 RR)
-    label_map = {
-        1: f"BUY Liquidity Sweep (1:{rr_ratio:.1f} RR)",
-        -1: f"SELL Liquidity Sweep (1:{rr_ratio:.1f} RR)",
-        0: "",
-    }
-    df["signal_label"] = df["signal"].map(label_map)
+            if w_h_max >= fvg["bottom"] and w_l_min <= fvg["top"]:
+                p_idx = int(np.argmax(w_h))
+                if 1 <= p_idx <= len(w_h) - 3:
+                    sw_l = float(np.min(w_l[max(0, p_idx - 4): p_idx]))
+                    peak_h = float(w_h[p_idx])
+                    curr_c = float(w_c[-2])
+                    prior_held = float(np.max(w_c[p_idx: -2])) >= (sw_l - (0.5 * pip_size))
+                    
+                    if curr_c < sw_l and prior_held:
+                        risk = peak_h - sw_l
+                        if risk > (0.5 * pip_size):
+                            signals[i] = -1
+                            entry_prices[i] = sw_l
+                            sl_prices[i] = peak_h
+                            tp_prices[i] = sw_l - (rr_ratio * risk)
+                            risk_distances[i] = risk
+                            sl_pips_arr[i] = risk / pip_size
+                            tp_pips_arr[i] = (rr_ratio * risk) / pip_size
+                            fvg_tops[i] = fvg["top"]
+                            fvg_bots[i] = fvg["bottom"]
+                            labels[i] = f"SELL MSS (15M FVG + 1M Shift | 1:{rr_ratio:.1f} RR)"
+                            cooldown_until = i + 15
+                            break
 
-    return df
+        if signals[i] != 0:
+            continue
 
+        # ── Check Bullish FVGs (Buy Setup) ───────────────────────────────────
+        for fvg in bullish_fvgs:
+            if bar_time and fvg.get("datetime") and fvg["datetime"] >= bar_time:
+                continue
 
+            if w_l_min <= fvg["top"] and w_h_max >= fvg["bottom"]:
+                v_idx = int(np.argmin(w_l))
+                if 1 <= v_idx <= len(w_l) - 3:
+                    sw_h = float(np.max(w_h[max(0, v_idx - 4): v_idx]))
+                    valley_l = float(w_l[v_idx])
+                    curr_c = float(w_c[-2])
+                    prior_held = float(np.min(w_c[v_idx: -2])) <= (sw_h + (0.5 * pip_size))
+
+                    if curr_c > sw_h and prior_held:
+                        risk = sw_h - valley_l
+                        if risk > (0.5 * pip_size):
+                            signals[i] = 1
+                            entry_prices[i] = sw_h
+                            sl_prices[i] = valley_l
+                            tp_prices[i] = sw_h + (rr_ratio * risk)
+                            risk_distances[i] = risk
+                            sl_pips_arr[i] = risk / pip_size
+                            tp_pips_arr[i] = (rr_ratio * risk) / pip_size
+                            fvg_tops[i] = fvg["top"]
+                            fvg_bots[i] = fvg["bottom"]
+                            labels[i] = f"BUY MSS (15M FVG + 1M Shift | 1:{rr_ratio:.1f} RR)"
+                            cooldown_until = i + 15
+                            break
+
+    df_out["signal"] = signals
+    df_out["entry_price"] = entry_prices
+    df_out["sl_price"] = sl_prices
+    df_out["tp_price"] = tp_prices
+    df_out["risk_distance"] = risk_distances
+    df_out["sl_pips"] = sl_pips_arr
+    df_out["tp_pips"] = tp_pips_arr
+    df_out["fvg_top"] = fvg_tops
+    df_out["fvg_bottom"] = fvg_bots
+    df_out["signal_label"] = labels
+
+    return df_out
 
 
 def get_latest_signal(
     df: pd.DataFrame,
+    df_15m: pd.DataFrame | None = None,
     symbol: str | None = None,
-    ma_period: int = MA_PERIOD,
-    ma_type: str = MA_TYPE,
     rr_ratio: float = RR_RATIO,
-    pip_buffer: float | None = None,
     pip_size: float | None = None,
     use_ml: bool = USE_ML_FILTER,
     confidence_threshold: float = ML_CONFIDENCE_THRESHOLD,
 ) -> dict:
     """
-    Return the signal evaluated on the most recently closed candle (second to last row,
-    as the last bar is actively forming in real time), with optional XGBoost confidence filter.
+    Evaluate the most recently closed 1-minute candle for a confirmed 15M FVG + 1M MSS setup.
     """
-    if len(df) < ma_period + 2:
-        return {"signal": 0, "reason": "Not enough bars to compute Moving Average"}
+    if len(df) < 15:
+        return {"signal": 0, "reason": "Not enough 1M candles (need >= 15)"}
 
-    df = generate_signals(
-        df,
-        symbol=symbol,
-        ma_period=ma_period,
-        ma_type=ma_type,
-        rr_ratio=rr_ratio,
-        pip_buffer=pip_buffer,
-        pip_size=pip_size,
-    )
+    if pip_size is None:
+        pip_size = _detect_pip_size(df, symbol=symbol)
 
-    
-    # Use the last fully closed candle (iloc[-2])
+    if df_15m is None or df_15m.empty:
+        df_15m = resample_1m_to_15m(df)
+
+    fvgs = find_15m_fvgs(df_15m, max_lookback_bars=MAX_FVG_LOOKBACK_BARS)
+    current_price = float(df.iloc[-2]["close"])
+    nearest_fvg = get_nearest_active_fvg(current_price, fvgs)
+
     bar = df.iloc[-2]
-    prev_bar = df.iloc[-3]
-    ma_col = f"ma_{ma_period}"
-
-    sig = int(bar["signal"])
-    ma_val = float(bar[ma_col]) if not pd.isna(bar[ma_col]) else None
+    prev_bar = df.iloc[-3] if len(df) >= 3 else bar
 
     result = {
-        "datetime":      bar["datetime"],
-        "signal":        sig,
-        "label":         bar["signal_label"],
-        "close":         float(bar["close"]),
-        "open":          float(bar["open"]),
-        "high":          float(bar["high"]),
-        "low":           float(bar["low"]),
-        "prev_open":     float(prev_bar["open"]),
-        "prev_high":     float(prev_bar["high"]),
-        "prev_low":      float(prev_bar["low"]),
-        "prev_close":    float(prev_bar["close"]),
-        "ma":            round(ma_val, 5) if ma_val is not None else None,
-        f"ema_{ma_period}": round(ma_val, 5) if ma_val is not None else None,
-        "entry_price":   float(bar["entry_price"]),
-        "sl_price":      round(float(bar["sl_price"]), 5) if not pd.isna(bar["sl_price"]) else None,
-        "tp_price":      round(float(bar["tp_price"]), 5) if not pd.isna(bar["tp_price"]) else None,
-        "target_ma":     round(ma_val, 5) if ma_val is not None else None,
-        "sl_pips":       round(float(bar["sl_pips"]), 2) if not pd.isna(bar["sl_pips"]) else None,
-        "tp_pips":       round(float(bar["tp_pips"]), 2) if not pd.isna(bar["tp_pips"]) else None,
-        "risk_distance": round(float(bar["risk_distance"]), 5) if not pd.isna(bar["risk_distance"]) else None,
-        "sweep_sell":    bool(bar["sweep_sell"]),
-        "sweep_buy":     bool(bar["sweep_buy"]),
-        "xgb_prob":      None,
-        "ml_filtered":   False,
+        "datetime": bar["datetime"] if "datetime" in bar else None,
+        "signal": 0,
+        "label": "",
+        "close": float(bar["close"]),
+        "open": float(bar["open"]),
+        "high": float(bar["high"]),
+        "low": float(bar["low"]),
+        "prev_open": float(prev_bar["open"]),
+        "prev_high": float(prev_bar["high"]),
+        "prev_low": float(prev_bar["low"]),
+        "prev_close": float(prev_bar["close"]),
+        "fvg_active": nearest_fvg is not None,
+        "fvg_top": nearest_fvg["top"] if nearest_fvg else None,
+        "fvg_bottom": nearest_fvg["bottom"] if nearest_fvg else None,
+        "fvg_type": nearest_fvg["type"] if nearest_fvg else None,
+        "entry_price": float(bar["close"]),
+        "sl_price": None,
+        "tp_price": None,
+        "risk_distance": None,
+        "sl_pips": None,
+        "tp_pips": None,
+        "xgb_prob": None,
+        "ml_filtered": False,
     }
 
-    # ── XGBoost Meta-Labeling Inference & Filter ──────────────────────────────
-    if sig != 0 and use_ml:
-        model = get_ml_model()
-        if model is not None:
-            try:
-                if __package__ is None or __package__ == "":
-                    from src.ml_features import extract_features_for_signal, FEATURE_COLUMNS
-                else:
-                    from .ml_features import extract_features_for_signal, FEATURE_COLUMNS
+    if not fvgs:
+        return result
 
-                feats = extract_features_for_signal(
-                    df=df,
-                    idx=len(df) - 2,
-                    signal_side=sig,
-                    pip_size=pip_size or _detect_pip_size(df),
-                    ma_period=ma_period,
-                )
-                feats_df = pd.DataFrame([[feats[col] for col in FEATURE_COLUMNS]], columns=FEATURE_COLUMNS)
-                prob = float(model.predict_proba(feats_df)[0][1])
-                result["xgb_prob"] = round(prob, 4)
+    # Check both Bearish and Bullish active FVGs
+    for fvg in fvgs[:10]:
+        side = fvg["direction"]
+        mss = detect_market_structure_shift(
+            df_1m=df,
+            fvg=fvg,
+            trend_side=side,
+            pip_size=pip_size,
+        )
 
-                if prob < confidence_threshold:
-                    result["ml_filtered"] = True
-                    result["signal"] = 0
-                    result["label"] = f"FILTERED by ML (Win Prob: {prob*100:.1f}% < {confidence_threshold*100:.0f}%)"
-                else:
-                    result["ml_filtered"] = False
-                    result["label"] += f" | [ML Conf: {prob*100:.1f}%]"
-            except Exception as exc:
-                print(f"[Strategy] Warning during ML inference: {exc}")
+        if mss is not None:
+            sig = mss["signal"]
+            result["signal"] = sig
+            result["entry_price"] = round(mss["entry_price"], 5)
+            result["sl_price"] = round(mss["sl_price"], 5)
+            result["tp_price"] = round(mss["tp_price"], 5)
+            result["risk_distance"] = round(mss["risk_distance"], 5)
+            result["sl_pips"] = round(mss["sl_pips"], 1)
+            result["tp_pips"] = round(mss["tp_pips"], 1)
+            result["fvg_top"] = fvg["top"]
+            result["fvg_bottom"] = fvg["bottom"]
+            result["fvg_type"] = fvg["type"]
+
+            dir_name = "BUY" if sig == 1 else "SELL"
+            result["label"] = f"{dir_name} MSS (15M FVG + 1M Shift | 1:{rr_ratio:.1f} RR)"
+
+            if use_ml:
+                model = get_ml_model()
+                if model is not None:
+                    try:
+                        if __package__ is None or __package__ == "":
+                            from src.ml_features import extract_features_for_signal, FEATURE_COLUMNS
+                        else:
+                            from .ml_features import extract_features_for_signal, FEATURE_COLUMNS
+
+                        feats = extract_features_for_signal(
+                            df=df,
+                            idx=len(df) - 2,
+                            signal_side=sig,
+                            pip_size=pip_size,
+                        )
+                        feats_df = pd.DataFrame([[feats[col] for col in FEATURE_COLUMNS]], columns=FEATURE_COLUMNS)
+                        prob = float(model.predict_proba(feats_df)[0][1])
+                        result["xgb_prob"] = round(prob, 4)
+
+                        if prob < confidence_threshold:
+                            result["ml_filtered"] = True
+                            result["signal"] = 0
+                            result["label"] = f"FILTERED by ML (Win Prob: {prob*100:.1f}% < {confidence_threshold*100:.0f}%)"
+                        else:
+                            result["ml_filtered"] = False
+                            result["label"] += f" | [ML Conf: {prob*100:.1f}%]"
+                    except Exception as exc:
+                        print(f"[Strategy] Warning during ML inference: {exc}")
+            break
 
     return result
-
