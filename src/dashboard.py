@@ -52,9 +52,9 @@ SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SRC_DIR)
 LIVE_MODE = "--live" in sys.argv
 
-# Multi-Symbol Configuration
-SUPPORTED_SYMBOLS = ["GBPUSD", "XAUUSD", "EURUSD"]
-DEFAULT_SYMBOL = "XAUUSD"
+# Multi-Symbol Configuration (EURUSD, GBPUSD, AUDUSD)
+SUPPORTED_SYMBOLS = ["EURUSD", "GBPUSD", "AUDUSD"]
+DEFAULT_SYMBOL = "EURUSD"
 
 
 # ---- Timezone & Trading Sessions (New York) ----------------------------------
@@ -62,8 +62,8 @@ NY_TZ = ZoneInfo("America/New_York")
 
 TRADING_SESSIONS_NY = [
     {"name": "Asia",     "start": (20, 0), "end": (24, 0), "code": "ASIA",     "color": "#8A2BE2", "time_range": "20:00 - 00:00 NY"},
-    {"name": "London",   "start": (2, 0),  "end": (5, 0),  "code": "LONDON",   "color": "#00C8A0", "time_range": "02:00 - 05:00 NY"},
-    {"name": "New York", "start": (7, 0),  "end": (11, 0), "code": "NEW_YORK", "color": "#FF8C00", "time_range": "07:00 - 11:00 NY"},
+    {"name": "London",   "start": (2, 0),  "end": (7, 0),  "code": "LONDON",   "color": "#00C8A0", "time_range": "02:00 - 07:00 NY"},
+    {"name": "New York", "start": (7, 0),  "end": (14, 0), "code": "NEW_YORK", "color": "#FF8C00", "time_range": "07:00 - 14:00 NY"},
 ]
 
 # ---- Colour Palette (Cyberpunk / Modern Quant Dark Theme) --------------------
@@ -186,8 +186,8 @@ def classify_trade_session(trade_time) -> str:
 def load_simulated_candles(symbol: str, count: int = 200) -> pd.DataFrame:
     """Generate realistic 1-minute simulated candles for offline testing."""
     times = pd.date_range(end=datetime.now(), periods=count, freq="1min")
-    base_prices = {"XAUUSD": 4340.0, "EURUSD": 1.1585, "GBPUSD": 1.3540}
-    scale_steps = {"XAUUSD": 0.50, "EURUSD": 0.0001, "GBPUSD": 0.0001}
+    base_prices = {"XAUUSD": 4340.0, "EURUSD": 1.1585, "GBPUSD": 1.3540, "AUDUSD": 0.6550}
+    scale_steps = {"XAUUSD": 0.50, "EURUSD": 0.0001, "GBPUSD": 0.0001, "AUDUSD": 0.0001}
 
     base = base_prices.get(symbol, 100.0)
     step = scale_steps.get(symbol, 0.01)
@@ -213,15 +213,15 @@ def load_simulated_candles(symbol: str, count: int = 200) -> pd.DataFrame:
 
 
 def enrich_symbol_data(df: pd.DataFrame, symbol: str) -> tuple[pd.DataFrame, dict]:
-    """Compute Liquidity Sweep strategy indicators, signals, and ML predictions."""
+    """Compute strategy indicators, signals, and ML predictions."""
     if __package__ is None or __package__ == "":
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from src.strategy import generate_signals, get_latest_signal, MA_PERIOD, HTF_EMA_PERIOD
+        from src.strategy import generate_signals, get_latest_signal
     else:
-        from .strategy import generate_signals, get_latest_signal, MA_PERIOD, HTF_EMA_PERIOD
+        from .strategy import generate_signals, get_latest_signal
 
     df = generate_signals(df, symbol=symbol)
-    sig_info = get_latest_signal(df, use_ml=True)
+    sig_info = get_latest_signal(df, symbol=symbol, use_ml=True)
     return df, sig_info
 
 
