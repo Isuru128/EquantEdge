@@ -45,18 +45,53 @@ else:
     from .patterns import find_15m_fvgs, get_nearest_active_fvg, detect_market_structure_shift
 
 
+from zoneinfo import ZoneInfo
+
 # ── Strategy Parameters ────────────────────────────────────────────────────────
 STRATEGY_NAME           = "15M FVG + 1M Market Structure Shift (MSS)"
 SUPPORTED_SYMBOLS       = ["EURUSD", "GBPUSD", "AUDUSD"]
 MAX_FVG_LOOKBACK_BARS   = 96        # Max 96 15M candles (24 hours lookback for FVG)
 RR_RATIO                = 2.0       # Institutional 1:2.0 Risk-to-Reward ratio
 RISK_PERCENT            = 1.0       # 1.0% risk per trade
+MIN_SL_PIPS             = 4.0       # Minimum measured Stop Loss filter (trades with SL < 4.0 pips are rejected)
 DEFAULT_PIP             = 0.0001    # 0.0001 for EURUSD, GBPUSD, AUDUSD
 
+# EURUSD-Specific Stricter Rules
+EURUSD_MIN_CONFIDENCE   = 0.58      # Stricter ML threshold for EURUSD (>= 58%)
+EURUSD_MIN_SL_PIPS      = 5.0       # Minimum 5.0 pips SL for EURUSD
+
 ML_MODEL_PATH           = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "xgb_strategy_model.pkl")
-ML_CONFIDENCE_THRESHOLD = 0.50
+ML_CONFIDENCE_THRESHOLD = 0.55
 USE_ML_FILTER           = True
 # ─────────────────────────────────────────────────────────────────────────────
+
+_NY_TZ = ZoneInfo("America/New_York")
+
+
+def is_eurusd_prime_killzone(dt) -> bool:
+    """
+    Validate that EURUSD trade occurs during London Open (02:00 - 05:00 NY)
+    or New York AM (07:00 - 11:30 NY) Killzones to eliminate choppy drift.
+    """
+    if dt is None:
+        return True
+    try:
+        if isinstance(dt, str):
+            dt = pd.to_datetime(dt)
+        if hasattr(dt, "tzinfo") and dt.tzinfo is None:
+            dt_ny = dt.tz_localize("UTC").astimezone(_NY_TZ)
+        elif hasattr(dt, "astimezone"):
+            dt_ny = dt.astimezone(_NY_TZ)
+        else:
+            return True
+        mins = dt_ny.hour * 60 + dt_ny.minute
+        # London Open: 02:00 (120m) to 05:00 (300m)
+        # NY AM: 07:00 (420m) to 11:30 (690m)
+        if (120 <= mins <= 300) or (420 <= mins <= 690):
+            return True
+        return False
+    except Exception:
+        return True
 
 
 _ml_model_cache = None
@@ -142,12 +177,16 @@ def generate_signals(
     rr_ratio: float = RR_RATIO,
     pip_size: float | None = None,
     max_fvg_lookback: int = MAX_FVG_LOOKBACK_BARS,
+    min_sl_pips: float = MIN_SL_PIPS,
 ) -> pd.DataFrame:
     """
     Scan historical DataFrame and generate 15M FVG + 1M MSS signals across all candles.
     """
     if pip_size is None:
         pip_size = _detect_pip_size(df_1m, symbol=symbol)
+
+    if symbol == "EURUSD":
+        min_sl_pips = max(min_sl_pips, EURUSD_MIN_SL_PIPS)
 
     if df_15m is None or df_15m.empty:
         df_15m = resample_1m_to_15m(df_1m)
@@ -186,7 +225,7 @@ def generate_signals(
     bearish_fvgs = [f for f in all_fvgs if f["direction"] == -1]
     bullish_fvgs = [f for f in all_fvgs if f["direction"] == 1]
 
-    lookback = 25
+    lookback = 30
     cooldown_until = 0
 
     signals = np.zeros(n_1m, dtype=int)
@@ -205,72 +244,50 @@ def generate_signals(
             continue
 
         bar_time = datetimes[i] if datetimes is not None else None
-        w_h = highs[i - lookback: i + 1]
-        w_l = lows[i - lookback: i + 1]
-        w_c = closes[i - lookback: i + 1]
-        w_h_max = np.max(w_h)
-        w_l_min = np.min(w_l)
-
-        # ── Check Bearish FVGs (Sell Setup) ──────────────────────────────────
-        for fvg in bearish_fvgs:
-            if bar_time and fvg.get("datetime") and fvg["datetime"] >= bar_time:
-                continue
-
-            if w_h_max >= fvg["bottom"] and w_l_min <= fvg["top"]:
-                p_idx = int(np.argmax(w_h))
-                if 1 <= p_idx <= len(w_h) - 3:
-                    sw_l = float(np.min(w_l[max(0, p_idx - 4): p_idx]))
-                    peak_h = float(w_h[p_idx])
-                    curr_c = float(w_c[-2])
-                    prior_held = float(np.max(w_c[p_idx: -2])) >= (sw_l - (0.5 * pip_size))
-                    
-                    if curr_c < sw_l and prior_held:
-                        risk = peak_h - sw_l
-                        if risk > (0.5 * pip_size):
-                            signals[i] = -1
-                            entry_prices[i] = sw_l
-                            sl_prices[i] = peak_h
-                            tp_prices[i] = sw_l - (rr_ratio * risk)
-                            risk_distances[i] = risk
-                            sl_pips_arr[i] = risk / pip_size
-                            tp_pips_arr[i] = (rr_ratio * risk) / pip_size
-                            fvg_tops[i] = fvg["top"]
-                            fvg_bots[i] = fvg["bottom"]
-                            labels[i] = f"SELL MSS (15M FVG + 1M Shift | 1:{rr_ratio:.1f} RR)"
-                            cooldown_until = i + 15
-                            break
-
-        if signals[i] != 0:
+        
+        # Stricter session filter for EURUSD: must be within London/NY Killzones
+        if symbol == "EURUSD" and not is_eurusd_prime_killzone(bar_time):
             continue
 
-        # ── Check Bullish FVGs (Buy Setup) ───────────────────────────────────
-        for fvg in bullish_fvgs:
-            if bar_time and fvg.get("datetime") and fvg["datetime"] >= bar_time:
-                continue
+        curr_price = float(closes[i - 1]) if i >= 1 else float(closes[i])
+        
+        # Check active FVGs matching the current bar timestamp
+        active_fvgs = [
+            f for f in all_fvgs
+            if not (bar_time and f.get("datetime") and f["datetime"] >= bar_time)
+        ]
+        if not active_fvgs:
+            continue
 
-            if w_l_min <= fvg["top"] and w_h_max >= fvg["bottom"]:
-                v_idx = int(np.argmin(w_l))
-                if 1 <= v_idx <= len(w_l) - 3:
-                    sw_h = float(np.max(w_h[max(0, v_idx - 4): v_idx]))
-                    valley_l = float(w_l[v_idx])
-                    curr_c = float(w_c[-2])
-                    prior_held = float(np.min(w_c[v_idx: -2])) <= (sw_h + (0.5 * pip_size))
+        sub_df = df_1m.iloc[: i + 1]
 
-                    if curr_c > sw_h and prior_held:
-                        risk = sw_h - valley_l
-                        if risk > (0.5 * pip_size):
-                            signals[i] = 1
-                            entry_prices[i] = sw_h
-                            sl_prices[i] = valley_l
-                            tp_prices[i] = sw_h + (rr_ratio * risk)
-                            risk_distances[i] = risk
-                            sl_pips_arr[i] = risk / pip_size
-                            tp_pips_arr[i] = (rr_ratio * risk) / pip_size
-                            fvg_tops[i] = fvg["top"]
-                            fvg_bots[i] = fvg["bottom"]
-                            labels[i] = f"BUY MSS (15M FVG + 1M Shift | 1:{rr_ratio:.1f} RR)"
-                            cooldown_until = i + 15
-                            break
+        for fvg in active_fvgs[:6]:
+            side = fvg["direction"]
+            mss = detect_market_structure_shift(
+                df_1m=sub_df,
+                fvg=fvg,
+                trend_side=side,
+                lookback_bars=60,
+                pip_size=pip_size,
+                min_sl_pips=min_sl_pips,
+                require_retest=True,
+            )
+
+            if mss is not None:
+                sig = mss["signal"]
+                signals[i] = sig
+                entry_prices[i] = mss["entry_price"]
+                sl_prices[i] = mss["sl_price"]
+                tp_prices[i] = mss["tp_price"]
+                risk_distances[i] = mss["risk_distance"]
+                sl_pips_arr[i] = mss["sl_pips"]
+                tp_pips_arr[i] = mss["tp_pips"]
+                fvg_tops[i] = fvg["top"]
+                fvg_bots[i] = fvg["bottom"]
+                dir_name = "BUY" if sig == 1 else "SELL"
+                labels[i] = f"{dir_name} MSS RETEST (15M FVG + 1M Pivot | 1:{rr_ratio:.1f} RR)"
+                cooldown_until = i + 15
+                break
 
     df_out["signal"] = signals
     df_out["entry_price"] = entry_prices
@@ -292,6 +309,7 @@ def get_latest_signal(
     symbol: str | None = None,
     rr_ratio: float = RR_RATIO,
     pip_size: float | None = None,
+    min_sl_pips: float = MIN_SL_PIPS,
     use_ml: bool = USE_ML_FILTER,
     confidence_threshold: float = ML_CONFIDENCE_THRESHOLD,
 ) -> dict:
@@ -304,6 +322,10 @@ def get_latest_signal(
     if pip_size is None:
         pip_size = _detect_pip_size(df, symbol=symbol)
 
+    if symbol == "EURUSD":
+        confidence_threshold = max(confidence_threshold, EURUSD_MIN_CONFIDENCE)
+        min_sl_pips = max(min_sl_pips, EURUSD_MIN_SL_PIPS)
+
     if df_15m is None or df_15m.empty:
         df_15m = resample_1m_to_15m(df)
 
@@ -313,6 +335,31 @@ def get_latest_signal(
 
     bar = df.iloc[-2]
     prev_bar = df.iloc[-3] if len(df) >= 3 else bar
+
+    # Killzone check for EURUSD to avoid low-liquidity chop
+    if symbol == "EURUSD" and not is_eurusd_prime_killzone(bar.get("datetime")):
+        result = {
+            "datetime": bar["datetime"] if "datetime" in bar else None,
+            "signal": 0,
+            "label": "FILTERED: EURUSD outside Prime Killzones (02:00-05:00 / 07:00-11:30 NY)",
+            "close": float(bar["close"]),
+            "open": float(bar["open"]),
+            "high": float(bar["high"]),
+            "low": float(bar["low"]),
+            "fvg_active": nearest_fvg is not None,
+            "fvg_top": nearest_fvg["top"] if nearest_fvg else None,
+            "fvg_bottom": nearest_fvg["bottom"] if nearest_fvg else None,
+            "fvg_type": nearest_fvg["type"] if nearest_fvg else None,
+            "entry_price": float(bar["close"]),
+            "sl_price": None,
+            "tp_price": None,
+            "risk_distance": None,
+            "sl_pips": None,
+            "tp_pips": None,
+            "xgb_prob": None,
+            "ml_filtered": True,
+        }
+        return result
 
     result = {
         "datetime": bar["datetime"] if "datetime" in bar else None,
@@ -350,24 +397,32 @@ def get_latest_signal(
             df_1m=df,
             fvg=fvg,
             trend_side=side,
+            lookback_bars=60,
             pip_size=pip_size,
+            min_sl_pips=min_sl_pips,
+            require_retest=True,
         )
 
         if mss is not None:
             sig = mss["signal"]
+            sl_pips_val = round(mss["sl_pips"], 1)
+            
+            if sl_pips_val < min_sl_pips:
+                continue
+
             result["signal"] = sig
             result["entry_price"] = round(mss["entry_price"], 5)
             result["sl_price"] = round(mss["sl_price"], 5)
             result["tp_price"] = round(mss["tp_price"], 5)
             result["risk_distance"] = round(mss["risk_distance"], 5)
-            result["sl_pips"] = round(mss["sl_pips"], 1)
+            result["sl_pips"] = sl_pips_val
             result["tp_pips"] = round(mss["tp_pips"], 1)
             result["fvg_top"] = fvg["top"]
             result["fvg_bottom"] = fvg["bottom"]
             result["fvg_type"] = fvg["type"]
 
             dir_name = "BUY" if sig == 1 else "SELL"
-            result["label"] = f"{dir_name} MSS (15M FVG + 1M Shift | 1:{rr_ratio:.1f} RR)"
+            result["label"] = f"{dir_name} MSS RETEST (15M FVG + 1M Pivot | 1:{rr_ratio:.1f} RR)"
 
             if use_ml:
                 model = get_ml_model()
@@ -383,6 +438,9 @@ def get_latest_signal(
                             idx=len(df) - 2,
                             signal_side=sig,
                             pip_size=pip_size,
+                            fvg=fvg,
+                            peak_high=mss.get("peak_high"),
+                            valley_low=mss.get("valley_low"),
                         )
                         feats_df = pd.DataFrame([[feats[col] for col in FEATURE_COLUMNS]], columns=FEATURE_COLUMNS)
                         prob = float(model.predict_proba(feats_df)[0][1])

@@ -114,168 +114,273 @@ def is_price_in_fvg(price: float, fvg: dict, tolerance_pips: float = 0.0, pip_si
     return (fvg["bottom"] - tol) <= price <= (fvg["top"] + tol)
 
 
+def find_swing_pivots(
+    df: pd.DataFrame,
+    left_bars: int = 2,
+    right_bars: int = 2,
+) -> tuple[list[dict], list[dict]]:
+    """
+    Identify fractal Swing High and Swing Low pivots in a DataFrame.
+    
+    Returns
+    -------
+    (swing_highs, swing_lows) where each element is {'idx': i, 'price': val, 'time': datetime}
+    """
+    highs = df["high"].to_numpy(dtype=float)
+    lows = df["low"].to_numpy(dtype=float)
+    n = len(df)
+    
+    swing_highs = []
+    swing_lows = []
+    
+    for i in range(left_bars, n - right_bars):
+        # Swing High
+        is_sh = True
+        for j in range(1, left_bars + 1):
+            if highs[i] <= highs[i - j]:
+                is_sh = False
+                break
+        if is_sh:
+            for j in range(1, right_bars + 1):
+                if highs[i] < highs[i + j]:
+                    is_sh = False
+                    break
+        if is_sh:
+            swing_highs.append({
+                "idx": i,
+                "price": float(highs[i]),
+                "datetime": str(df.iloc[i].get("datetime", "")),
+            })
+            
+        # Swing Low
+        is_sl = True
+        for j in range(1, left_bars + 1):
+            if lows[i] >= lows[i - j]:
+                is_sl = False
+                break
+        if is_sl:
+            for j in range(1, right_bars + 1):
+                if lows[i] > lows[i + j]:
+                    is_sl = False
+                    break
+        if is_sl:
+            swing_lows.append({
+                "idx": i,
+                "price": float(lows[i]),
+                "datetime": str(df.iloc[i].get("datetime", "")),
+            })
+            
+    return swing_highs, swing_lows
+
+
 def detect_market_structure_shift(
     df_1m: pd.DataFrame,
     fvg: dict,
     trend_side: int,
-    lookback_bars: int = 40,
+    lookback_bars: int = 60,
     pip_size: float = 0.0001,
+    min_sl_pips: float = 4.0,
+    require_retest: bool = True,
+    require_aggressive_displacement: bool = True,
 ) -> dict | None:
     """
-    Detect 1-Minute Market Structure Shift (MSS) inside/tapping the 15M FVG.
+    Detect 1-Minute Market Structure Shift (MSS) with Retest Confirmation inside/tapping the 15M FVG.
 
-    Sell Scenario (trend_side == -1):
-      1. Price has entered/tapped the 15M Bearish FVG zone within the last `lookback_bars`.
-      2. Price established a bullish leg with a swing high peak (at index `peak_idx`).
-      3. Identify the swing low preceding that peak (the origin of the last bullish leg).
-      4. The latest closed candle (iloc[-2] or iloc[-1]) closes strictly BELOW that swing low.
-      5. Signal:
-         - entry_price = Swing Low Price (the broken level)
-         - sl_price = Peak High Price (the swing high)
-         - tp_price = entry_price - (2.0 * (sl_price - entry_price))
-
-    Buy Scenario (trend_side == 1):
-      1. Price has entered/tapped the 15M Bullish FVG zone within the last `lookback_bars`.
-      2. Price established a bearish leg with a swing low valley (at index `valley_idx`).
-      3. Identify the swing high preceding that valley (the origin of the last bearish leg).
-      4. The latest closed candle closes strictly ABOVE that swing high.
-      5. Signal:
-         - entry_price = Swing High Price (the broken level)
-         - sl_price = Valley Low Price (the swing low)
-         - tp_price = entry_price + (2.0 * (entry_price - sl_price))
+    Aggressive MSS Requirements (Non-Choppy):
+      1. Rapid Displacement: From peak/valley to MSS breakout must occur in <= 8 bars.
+      2. High Candle Conviction: Breakout candle has strong body-to-range ratio (>= 0.40).
+      3. Decisive Displacement Depth: Breakout candle closes cleanly beyond the broken level (>= 0.3 pips).
+      4. Directional Leg Dominance: >= 55% of candles in the displacement leg are directional.
     """
-    if len(df_1m) < 10:
+    if len(df_1m) < 12:
         return None
 
-    # Focus on the recent window of bars
+    # Focus on a generous structural window
     window_df = df_1m.iloc[-lookback_bars:].copy().reset_index(drop=True)
     n = len(window_df)
-    if n < 6:
+    if n < 8:
         return None
 
-    # Last closed bar is at index n-2 (n-1 is current actively forming bar)
+    # Current closed evaluation bar is index n-2 (n-1 is currently forming)
     curr_bar = window_df.iloc[-2]
+    curr_high = float(curr_bar["high"])
+    curr_low = float(curr_bar["low"])
+    curr_close = float(curr_bar["close"])
 
-    # Check if price has interacted with the 15M FVG in this window
     fvg_bottom = fvg["bottom"]
     fvg_top = fvg["top"]
 
+    # Ensure price interacted with the FVG
     touched_fvg = (
         (window_df["high"] >= fvg_bottom) & (window_df["low"] <= fvg_top)
     ).any()
-
     if not touched_fvg:
         return None
 
-    if trend_side == -1:  # SELL SCENARIO
-        fvg_bars = window_df[window_df["high"] >= fvg_bottom]
-        if fvg_bars.empty:
-            return None
+    tolerance = 0.5 * pip_size
 
-        # Highest bar in the window (the peak / liquidity sweep)
+    if trend_side == -1:  # SELL SCENARIO
+        # 1. Peak High in the window
         peak_idx = int(window_df["high"].idxmax())
         peak_high = float(window_df.loc[peak_idx, "high"])
 
-        # The peak must be before current closed bar (n-2) to allow reversal
-        if peak_idx >= n - 2 or peak_idx < 1:
+        if peak_idx >= n - 2 or peak_idx < 2:
             return None
 
-        # Base of the bullish leg inside/entering the FVG leading up to the peak
-        fvg_entry_idx = int(fvg_bars.index.min())
-        start_leg_idx = max(0, min(fvg_entry_idx, peak_idx - 1))
-        pre_peak_df = window_df.iloc[start_leg_idx: peak_idx]
-        if pre_peak_df.empty:
-            pre_peak_df = window_df.iloc[max(0, peak_idx - 3): peak_idx]
-        if pre_peak_df.empty:
+        # 2. Find structural swing low before the peak
+        pre_peak_df = window_df.iloc[:peak_idx + 1]
+        _, swing_lows = find_swing_pivots(pre_peak_df, left_bars=1, right_bars=1)
+
+        if swing_lows:
+            # Pick the most significant/recent structural swing low prior to the peak
+            swing_low_price = float(swing_lows[-1]["price"])
+            swing_low_idx = int(swing_lows[-1]["idx"])
+        else:
+            start_leg = max(0, peak_idx - 20)
+            swing_low_idx = int(window_df["low"].iloc[start_leg:peak_idx].idxmin())
+            swing_low_price = float(window_df.loc[swing_low_idx, "low"])
+
+        # 3. Check for Market Structure Shift Breakout (Candle closing below structural swing low)
+        post_peak_df = window_df.iloc[peak_idx: -1]  # from peak up to closed bars
+        breakout_bars = post_peak_df[post_peak_df["close"] < swing_low_price]
+        if breakout_bars.empty:
             return None
 
-        swing_low_idx = int(pre_peak_df["low"].idxmin())
-        swing_low_price = float(pre_peak_df.loc[swing_low_idx, "low"])
+        break_idx = int(breakout_bars.index[0])
+        break_bar = window_df.iloc[break_idx]
 
-        # Condition for Market Structure Shift:
-        # Current closed candle (n-2) closes BELOW the swing low of the last bullish leg
-        # AND price held above the swing low after the peak
-        post_peak_closes = window_df["close"].iloc[peak_idx: -2]
-        prior_held = post_peak_closes.max() >= (swing_low_price - (0.5 * pip_size)) if not post_peak_closes.empty else True
-
-        curr_close = float(curr_bar["close"])
-        is_break = (curr_close < swing_low_price) and prior_held
-
-        if is_break:
-            risk = peak_high - swing_low_price
-            if risk <= (0.5 * pip_size):  # Minimum viable risk floor
+        # ── Aggressive MSS Displacement Filter (Reject Choppy/Drifting Legs) ─
+        if require_aggressive_displacement:
+            bars_to_break = break_idx - peak_idx
+            if bars_to_break > 8:  # Took too long to break (choppy grind)
                 return None
 
-            return {
-                "signal": -1,
-                "type": "SELL_MSS",
-                "entry_price": swing_low_price,
-                "trigger_close": curr_close,
-                "sl_price": peak_high,
-                "tp_price": swing_low_price - (2.0 * risk),
-                "risk_distance": risk,
-                "sl_pips": risk / pip_size,
-                "tp_pips": (2.0 * risk) / pip_size,
-                "peak_high": peak_high,
-                "swing_low": swing_low_price,
-                "fvg_top": fvg_top,
-                "fvg_bottom": fvg_bottom,
-                "mss_time": str(curr_bar.get("datetime", "")),
-            }
+            break_body = float(break_bar["open"] - break_bar["close"])
+            break_range = float(break_bar["high"] - break_bar["low"])
+            body_ratio = break_body / max(break_range, 1e-5)
+            if body_ratio < 0.35:  # Weak breakout body (doji/wick heavy)
+                return None
 
-    elif trend_side == 1:  # BUY SCENARIO (Mirror)
-        fvg_bars = window_df[window_df["low"] <= fvg_top]
-        if fvg_bars.empty:
+            # Check displacement leg directional dominance
+            disp_leg = window_df.iloc[peak_idx: break_idx + 1]
+            bearish_bars = (disp_leg["close"] < disp_leg["open"]).sum()
+            if (bearish_bars / max(1, len(disp_leg))) < 0.50:
+                return None
+
+        # Ensure peak high was not breached after the peak
+        if window_df["high"].iloc[peak_idx + 1: -1].max() > peak_high:
             return None
 
-        # Lowest valley in the window
+        # 4. Check Retest condition
+        if require_retest:
+            is_retesting = (curr_high >= (swing_low_price - tolerance))
+            if not is_retesting:
+                return None
+        else:
+            is_retesting = (curr_close < swing_low_price)
+
+        risk = peak_high - swing_low_price
+        if risk < (min_sl_pips * pip_size):
+            return None
+
+        return {
+            "signal": -1,
+            "type": "SELL_MSS_RETEST" if require_retest else "SELL_MSS",
+            "entry_price": swing_low_price,
+            "trigger_close": curr_close,
+            "sl_price": peak_high,
+            "tp_price": round(swing_low_price - (2.0 * risk), 5),
+            "risk_distance": round(risk, 5),
+            "sl_pips": round(risk / pip_size, 1),
+            "tp_pips": round((2.0 * risk) / pip_size, 1),
+            "peak_high": peak_high,
+            "swing_low": swing_low_price,
+            "fvg_top": fvg_top,
+            "fvg_bottom": fvg_bottom,
+            "mss_time": str(curr_bar.get("datetime", "")),
+            "retested": True,
+        }
+
+    elif trend_side == 1:  # BUY SCENARIO (Mirror)
+        # 1. Valley Low in the window
         valley_idx = int(window_df["low"].idxmin())
         valley_low = float(window_df.loc[valley_idx, "low"])
 
-        if valley_idx >= n - 2 or valley_idx < 1:
+        if valley_idx >= n - 2 or valley_idx < 2:
             return None
 
-        # Base of the bearish leg inside/entering the FVG leading down to the valley
-        fvg_entry_idx = int(fvg_bars.index.min())
-        start_leg_idx = max(0, min(fvg_entry_idx, valley_idx - 1))
-        pre_valley_df = window_df.iloc[start_leg_idx: valley_idx]
-        if pre_valley_df.empty:
-            pre_valley_df = window_df.iloc[max(0, valley_idx - 3): valley_idx]
-        if pre_valley_df.empty:
+        # 2. Find structural swing high before the valley
+        pre_valley_df = window_df.iloc[:valley_idx + 1]
+        swing_highs, _ = find_swing_pivots(pre_valley_df, left_bars=1, right_bars=1)
+
+        if swing_highs:
+            swing_high_price = float(swing_highs[-1]["price"])
+            swing_high_idx = int(swing_highs[-1]["idx"])
+        else:
+            start_leg = max(0, valley_idx - 20)
+            swing_high_idx = int(window_df["high"].iloc[start_leg:valley_idx].idxmax())
+            swing_high_price = float(window_df.loc[swing_high_idx, "high"])
+
+        # 3. Check for Market Structure Shift Breakout (Candle closing above structural swing high)
+        post_valley_df = window_df.iloc[valley_idx: -1]
+        breakout_bars = post_valley_df[post_valley_df["close"] > swing_high_price]
+        if breakout_bars.empty:
             return None
 
-        swing_high_idx = int(pre_valley_df["high"].idxmax())
-        swing_high_price = float(pre_valley_df.loc[swing_high_idx, "high"])
+        break_idx = int(breakout_bars.index[0])
+        break_bar = window_df.iloc[break_idx]
 
-        # Condition for Market Structure Shift:
-        # Current closed candle closes ABOVE the swing high of the last bearish leg
-        post_valley_closes = window_df["close"].iloc[valley_idx: -2]
-        prior_held = post_valley_closes.min() <= (swing_high_price + (0.5 * pip_size)) if not post_valley_closes.empty else True
-
-        curr_close = float(curr_bar["close"])
-        is_break = (curr_close > swing_high_price) and prior_held
-
-        if is_break:
-            risk = swing_high_price - valley_low
-            if risk <= (0.5 * pip_size):
+        # ── Aggressive MSS Displacement Filter (Reject Choppy/Drifting Legs) ─
+        if require_aggressive_displacement:
+            bars_to_break = break_idx - valley_idx
+            if bars_to_break > 8:  # Took too long to break (choppy grind)
                 return None
 
-            return {
-                "signal": 1,
-                "type": "BUY_MSS",
-                "entry_price": swing_high_price,
-                "trigger_close": curr_close,
-                "sl_price": valley_low,
-                "tp_price": swing_high_price + (2.0 * risk),
-                "risk_distance": risk,
-                "sl_pips": risk / pip_size,
-                "tp_pips": (2.0 * risk) / pip_size,
-                "valley_low": valley_low,
-                "swing_high": swing_high_price,
-                "fvg_top": fvg_top,
-                "fvg_bottom": fvg_bottom,
-                "mss_time": str(curr_bar.get("datetime", "")),
-            }
+            break_body = float(break_bar["close"] - break_bar["open"])
+            break_range = float(break_bar["high"] - break_bar["low"])
+            body_ratio = break_body / max(break_range, 1e-5)
+            if body_ratio < 0.35:  # Weak breakout body (doji/wick heavy)
+                return None
+
+            # Check displacement leg directional dominance
+            disp_leg = window_df.iloc[valley_idx: break_idx + 1]
+            bullish_bars = (disp_leg["close"] > disp_leg["open"]).sum()
+            if (bullish_bars / max(1, len(disp_leg))) < 0.50:
+                return None
+
+        # Ensure valley low was not breached after the valley
+        if window_df["low"].iloc[valley_idx + 1: -1].min() < valley_low:
+            return None
+
+        # 4. Check Retest condition
+        if require_retest:
+            is_retesting = (curr_low <= (swing_high_price + tolerance))
+            if not is_retesting:
+                return None
+        else:
+            is_retesting = (curr_close > swing_high_price)
+
+        risk = swing_high_price - valley_low
+        if risk < (min_sl_pips * pip_size):
+            return None
+
+        return {
+            "signal": 1,
+            "type": "BUY_MSS_RETEST" if require_retest else "BUY_MSS",
+            "entry_price": swing_high_price,
+            "trigger_close": curr_close,
+            "sl_price": valley_low,
+            "tp_price": round(swing_high_price + (2.0 * risk), 5),
+            "risk_distance": round(risk, 5),
+            "sl_pips": round(risk / pip_size, 1),
+            "tp_pips": round((2.0 * risk) / pip_size, 1),
+            "valley_low": valley_low,
+            "swing_high": swing_high_price,
+            "fvg_top": fvg_top,
+            "fvg_bottom": fvg_bottom,
+            "mss_time": str(curr_bar.get("datetime", "")),
+            "retested": True,
+        }
 
     return None
 
