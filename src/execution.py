@@ -122,6 +122,7 @@ def place_order(
     mother_low: float | None = None,
     sl_price: float | None = None,
     tp_price: float | None = None,
+    magic: int = 20260816,
 ) -> int | None:
     """
     Place a market order in the direction of `signal`.
@@ -166,6 +167,15 @@ def place_order(
             tp = round(tp_price, info.digits)
         else:
             tp = round(price + (tp_pips or 100.0) * pip, info.digits)
+
+        # Enforce valid stops for BUY (SL must be < price, TP must be > price)
+        if sl >= price:
+            print(f"{_log_prefix()} ERROR placing order: Stop Loss ({sl}) >= Ask price ({price}). Order aborted.")
+            return None
+        if tp <= price:
+            print(f"{_log_prefix()} ERROR placing order: Take Profit ({tp}) <= Ask price ({price}). Price moved past TP. Order aborted.")
+            return None
+
     else:                    # SELL
         price = tick.bid
         order_type = mt5.ORDER_TYPE_SELL
@@ -179,8 +189,18 @@ def place_order(
         else:
             tp = round(price - (tp_pips or 100.0) * pip, info.digits)
 
+        # Enforce valid stops for SELL (SL must be > price, TP must be < price)
+        if sl <= price:
+            print(f"{_log_prefix()} ERROR placing order: Stop Loss ({sl}) <= Bid price ({price}). Order aborted.")
+            return None
+        if tp >= price:
+            print(f"{_log_prefix()} ERROR placing order: Take Profit ({tp}) >= Bid price ({price}). Price moved past TP. Order aborted.")
+            return None
+
     effective_sl_pips = abs(price - sl) / pip if pip > 0 else (sl_pips or 50.0)
-    effective_sl_pips = max(1.0, effective_sl_pips)
+    if effective_sl_pips < 4.0:
+        print(f"{_log_prefix()} ERROR placing order: Measured Stop Loss ({effective_sl_pips:.1f} pips) < 4.0 pips minimum threshold. Order aborted.")
+        return None
 
     # Position sizing
     pip_value = info.trade_tick_value * (pip / info.point)
@@ -247,7 +267,7 @@ def place_order(
             "sl":           sl,
             "tp":           tp,
             "deviation":    20,           # max price deviation in points
-            "magic":        20260816,     # unique EA identifier
+            "magic":        magic,        # unique strategy/EA identifier
             "comment":      comment,
             "type_time":    mt5.ORDER_TIME_GTC,
             "type_filling": mode,
@@ -420,4 +440,67 @@ def get_open_positions(symbol: str | None = None) -> list:
     """Return a list of open positions, optionally filtered by symbol."""
     positions = mt5.positions_get(symbol=symbol) if symbol else mt5.positions_get()
     return list(positions) if positions else []
+
+
+def partial_close_position(ticket: int, symbol: str, close_ratio: float = 0.50) -> float | None:
+    """
+    Partially close an open MT5 position (e.g. 50% scale-out at +1.0R target).
+    Returns the closed volume on success, or None on failure.
+    """
+    if DRY_RUN:
+        print(f"{_log_prefix()} [DRY RUN] Would partially close {close_ratio*100:.0f}% of position #{ticket}")
+        return 0.5
+
+    position = mt5.positions_get(ticket=ticket)
+    if not position:
+        return None
+
+    pos = position[0]
+    info = _symbol_info(symbol)
+    tick = mt5.symbol_info_tick(symbol)
+    if tick is None:
+        return None
+
+    order_type = mt5.ORDER_TYPE_SELL if pos.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
+    price = tick.bid if order_type == mt5.ORDER_TYPE_SELL else tick.ask
+
+    # Calculate partial volume (rounded to step)
+    step = info.volume_step or 0.01
+    raw_vol = pos.volume * close_ratio
+    close_vol = max(info.volume_min, round(raw_vol / step) * step)
+    close_vol = min(close_vol, pos.volume)
+
+    if (pos.volume - close_vol) < info.volume_min:
+        # If remaining is less than min lot, close full position
+        close_vol = pos.volume
+
+    candidate_modes = get_symbol_filling_modes(info)
+    for mode in candidate_modes:
+        request = {
+            "action":       mt5.TRADE_ACTION_DEAL,
+            "position":     ticket,
+            "symbol":       symbol,
+            "volume":       close_vol,
+            "type":         order_type,
+            "price":        price,
+            "deviation":    20,
+            "magic":        pos.magic,
+            "comment":      "Partial Close +1.0R",
+            "type_time":    mt5.ORDER_TIME_GTC,
+            "type_filling": mode,
+        }
+        result = mt5.order_send(request)
+        if result is not None and result.retcode in (
+            mt5.TRADE_RETCODE_DONE,
+            mt5.TRADE_RETCODE_DONE_PARTIAL,
+            mt5.TRADE_RETCODE_PLACED,
+            0,
+        ):
+            print(f"{_log_prefix()} Partial close of {close_vol} lots on #{ticket} successful (+1.0R Secured).")
+            return close_vol
+        elif result is not None and result.retcode == 10030:
+            continue
+
+    print(f"{_log_prefix()} Failed partial close on #{ticket}.")
+    return None
 
