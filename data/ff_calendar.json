@@ -1,0 +1,722 @@
+[
+  {
+    "title": "Core Retail Sales q/q",
+    "country": "NZD",
+    "impact": "Low",
+    "date": "2026-08-24T02:45:00+00:00",
+    "raw_date": "08-23-2026",
+    "raw_time": "10:45pm",
+    "forecast": "0.3%",
+    "previous": "1.0%"
+  },
+  {
+    "title": "Retail Sales q/q",
+    "country": "NZD",
+    "impact": "Low",
+    "date": "2026-08-24T02:45:00+00:00",
+    "raw_date": "08-23-2026",
+    "raw_time": "10:45pm",
+    "forecast": "0.1%",
+    "previous": "0.9%"
+  },
+  {
+    "title": "Corporate Profits q/q",
+    "country": "CAD",
+    "impact": "Low",
+    "date": "2026-08-24T16:30:00+00:00",
+    "raw_date": "08-24-2026",
+    "raw_time": "12:30pm",
+    "forecast": "",
+    "previous": "-2.0%"
+  },
+  {
+    "title": "Treasury Sec Bessent Speaks",
+    "country": "USD",
+    "impact": "Medium",
+    "date": "2026-08-24T21:00:00+00:00",
+    "raw_date": "08-24-2026",
+    "raw_time": "5:00pm",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "Monetary Policy Meeting Minutes",
+    "country": "AUD",
+    "impact": "Low",
+    "date": "2026-08-25T05:30:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "1:30am",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "BOJ Core CPI y/y",
+    "country": "JPY",
+    "impact": "Low",
+    "date": "2026-08-25T09:00:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "5:00am",
+    "forecast": "1.4%",
+    "previous": "1.5%"
+  },
+  {
+    "title": "German Final GDP q/q",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-25T10:00:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "6:00am",
+    "forecast": "0.2%",
+    "previous": "0.2%"
+  },
+  {
+    "title": "German ifo Business Climate",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-25T12:00:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "8:00am",
+    "forecast": "87.2",
+    "previous": "86.6"
+  },
+  {
+    "title": "ADP Weekly Employment Change",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-25T16:15:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "12:15pm",
+    "forecast": "",
+    "previous": "9.5K"
+  },
+  {
+    "title": "FOMC Member Barkin Speaks",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-25T16:30:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "12:30pm",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "Belgian NBB Business Climate",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-25T17:00:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "1:00pm",
+    "forecast": "-11.0",
+    "previous": "-11.9"
+  },
+  {
+    "title": "HPI m/m",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-25T17:00:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "1:00pm",
+    "forecast": "0.2%",
+    "previous": "0.3%"
+  },
+  {
+    "title": "S&P/CS Composite-20 HPI y/y",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-25T17:00:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "1:00pm",
+    "forecast": "1.8%",
+    "previous": "1.6%"
+  },
+  {
+    "title": "CB Consumer Confidence",
+    "country": "USD",
+    "impact": "Medium",
+    "date": "2026-08-25T18:00:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "2:00pm",
+    "forecast": "90.3",
+    "previous": "90.8"
+  },
+  {
+    "title": "New Home Sales",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-25T18:00:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "2:00pm",
+    "forecast": "620K",
+    "previous": "628K"
+  },
+  {
+    "title": "Richmond Manufacturing Index",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-25T18:00:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "2:00pm",
+    "forecast": "6",
+    "previous": "5"
+  },
+  {
+    "title": "FOMC Member Barkin Speaks",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-26T00:00:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "8:00pm",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "API Weekly Statistical Bulletin",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-26T00:30:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "8:30pm",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "SPPI y/y",
+    "country": "JPY",
+    "impact": "Low",
+    "date": "2026-08-26T03:50:00+00:00",
+    "raw_date": "08-25-2026",
+    "raw_time": "11:50pm",
+    "forecast": "3.2%",
+    "previous": "3.2%"
+  },
+  {
+    "title": "MI Leading Index m/m",
+    "country": "AUD",
+    "impact": "Low",
+    "date": "2026-08-26T04:30:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "12:30am",
+    "forecast": "",
+    "previous": "0.0%"
+  },
+  {
+    "title": "CPI m/m",
+    "country": "AUD",
+    "impact": "High",
+    "date": "2026-08-26T05:30:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "1:30am",
+    "forecast": "0.9%",
+    "previous": "-0.1%"
+  },
+  {
+    "title": "CPI y/y",
+    "country": "AUD",
+    "impact": "High",
+    "date": "2026-08-26T05:30:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "1:30am",
+    "forecast": "3.3%",
+    "previous": "3.8%"
+  },
+  {
+    "title": "Trimmed Mean CPI m/m",
+    "country": "AUD",
+    "impact": "High",
+    "date": "2026-08-26T05:30:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "1:30am",
+    "forecast": "0.4%",
+    "previous": "0.3%"
+  },
+  {
+    "title": "Construction Work Done q/q",
+    "country": "AUD",
+    "impact": "Low",
+    "date": "2026-08-26T05:30:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "1:30am",
+    "forecast": "0.5%",
+    "previous": "3.4%"
+  },
+  {
+    "title": "UBS Economic Expectations",
+    "country": "CHF",
+    "impact": "Low",
+    "date": "2026-08-26T12:00:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "8:00am",
+    "forecast": "",
+    "previous": "10.0"
+  },
+  {
+    "title": "CBI Realized Sales",
+    "country": "GBP",
+    "impact": "Low",
+    "date": "2026-08-26T14:00:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "10:00am",
+    "forecast": "-35",
+    "previous": "-26"
+  },
+  {
+    "title": "Core PCE Price Index m/m",
+    "country": "USD",
+    "impact": "High",
+    "date": "2026-08-26T16:30:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "12:30pm",
+    "forecast": "0.2%",
+    "previous": "0.1%"
+  },
+  {
+    "title": "Prelim GDP q/q",
+    "country": "USD",
+    "impact": "High",
+    "date": "2026-08-26T16:30:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "12:30pm",
+    "forecast": "1.5%",
+    "previous": "1.5%"
+  },
+  {
+    "title": "Prelim GDP Price Index q/q",
+    "country": "USD",
+    "impact": "Medium",
+    "date": "2026-08-26T16:30:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "12:30pm",
+    "forecast": "6.2%",
+    "previous": "6.2%"
+  },
+  {
+    "title": "Core Durable Goods Orders m/m",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-26T16:30:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "12:30pm",
+    "forecast": "0.6%",
+    "previous": "0.6%"
+  },
+  {
+    "title": "Durable Goods Orders m/m",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-26T16:30:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "12:30pm",
+    "forecast": "0.4%",
+    "previous": "0.3%"
+  },
+  {
+    "title": "Personal Income m/m",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-26T16:30:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "12:30pm",
+    "forecast": "0.2%",
+    "previous": "0.2%"
+  },
+  {
+    "title": "Personal Spending m/m",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-26T16:30:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "12:30pm",
+    "forecast": "0.1%",
+    "previous": "0.3%"
+  },
+  {
+    "title": "Crude Oil Inventories",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-26T18:30:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "2:30pm",
+    "forecast": "1.6M",
+    "previous": "4.4M"
+  },
+  {
+    "title": "FOMC Member Barkin Speaks",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-26T19:45:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "3:45pm",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "Gov Board Member Martin Speaks",
+    "country": "CHF",
+    "impact": "Low",
+    "date": "2026-08-26T20:15:00+00:00",
+    "raw_date": "08-26-2026",
+    "raw_time": "4:15pm",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "Household Spending m/m",
+    "country": "AUD",
+    "impact": "Low",
+    "date": "2026-08-27T05:30:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "1:30am",
+    "forecast": "0.3%",
+    "previous": "0.8%"
+  },
+  {
+    "title": "Private Capital Expenditure q/q",
+    "country": "AUD",
+    "impact": "Low",
+    "date": "2026-08-27T05:30:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "1:30am",
+    "forecast": "0.8%",
+    "previous": "6.5%"
+  },
+  {
+    "title": "RBA Bulletin",
+    "country": "AUD",
+    "impact": "Low",
+    "date": "2026-08-27T05:30:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "1:30am",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "German GfK Consumer Climate",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-27T10:00:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "6:00am",
+    "forecast": "-29.5",
+    "previous": "-29.6"
+  },
+  {
+    "title": "M3 Money Supply y/y",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-27T12:00:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "8:00am",
+    "forecast": "3.5%",
+    "previous": "3.3%"
+  },
+  {
+    "title": "Private Loans y/y",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-27T12:00:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "8:00am",
+    "forecast": "2.9%",
+    "previous": "3.0%"
+  },
+  {
+    "title": "ECB Monetary Policy Meeting Accounts",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-27T15:30:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "11:30am",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "Current Account",
+    "country": "CAD",
+    "impact": "Low",
+    "date": "2026-08-27T16:30:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "12:30pm",
+    "forecast": "3.5B",
+    "previous": "-7.2B"
+  },
+  {
+    "title": "Unemployment Claims",
+    "country": "USD",
+    "impact": "Medium",
+    "date": "2026-08-27T16:30:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "12:30pm",
+    "forecast": "208K",
+    "previous": "206K"
+  },
+  {
+    "title": "Goods Trade Balance",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-27T16:30:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "12:30pm",
+    "forecast": "-100.8B",
+    "previous": "-101.5B"
+  },
+  {
+    "title": "Prelim Wholesale Inventories m/m",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-27T16:30:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "12:30pm",
+    "forecast": "0.2%",
+    "previous": "0.2%"
+  },
+  {
+    "title": "CB Leading Index m/m",
+    "country": "CNY",
+    "impact": "Low",
+    "date": "2026-08-27T17:00:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "1:00pm",
+    "forecast": "",
+    "previous": "0.1%"
+  },
+  {
+    "title": "Natural Gas Storage",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-27T18:30:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "2:30pm",
+    "forecast": "19B",
+    "previous": "16B"
+  },
+  {
+    "title": "Jackson Hole Symposium",
+    "country": "ALL",
+    "impact": "Medium",
+    "date": "2026-08-27T20:15:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "4:15pm",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "Tokyo Core CPI y/y",
+    "country": "JPY",
+    "impact": "Medium",
+    "date": "2026-08-28T03:30:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "11:30pm",
+    "forecast": "1.8%",
+    "previous": "1.9%"
+  },
+  {
+    "title": "Unemployment Rate",
+    "country": "JPY",
+    "impact": "Low",
+    "date": "2026-08-28T03:30:00+00:00",
+    "raw_date": "08-27-2026",
+    "raw_time": "11:30pm",
+    "forecast": "2.5%",
+    "previous": "2.5%"
+  },
+  {
+    "title": "German Import Prices m/m",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-28T10:00:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "6:00am",
+    "forecast": "0.3%",
+    "previous": "-0.7%"
+  },
+  {
+    "title": "French Consumer Spending m/m",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-28T10:45:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "6:45am",
+    "forecast": "0.1%",
+    "previous": "0.4%"
+  },
+  {
+    "title": "French Final Private Payrolls q/q",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-28T10:45:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "6:45am",
+    "forecast": "-0.1%",
+    "previous": "-0.1%"
+  },
+  {
+    "title": "French Prelim CPI m/m",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-28T10:45:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "6:45am",
+    "forecast": "0.7%",
+    "previous": "0.6%"
+  },
+  {
+    "title": "French Prelim GDP q/q",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-28T10:45:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "6:45am",
+    "forecast": "0.2%",
+    "previous": "0.2%"
+  },
+  {
+    "title": "KOF Economic Barometer",
+    "country": "CHF",
+    "impact": "Low",
+    "date": "2026-08-28T11:00:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "7:00am",
+    "forecast": "103.0",
+    "previous": "103.5"
+  },
+  {
+    "title": "Spanish Flash CPI y/y",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-28T11:00:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "7:00am",
+    "forecast": "4.2%",
+    "previous": "3.6%"
+  },
+  {
+    "title": "German Unemployment Change",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-28T11:55:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "7:55am",
+    "forecast": "4K",
+    "previous": "6K"
+  },
+  {
+    "title": "Italian 10-y Bond Auction",
+    "country": "EUR",
+    "impact": "Low",
+    "date": "2026-08-28T13:09:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "9:09am",
+    "forecast": "",
+    "previous": "4.00|1.7"
+  },
+  {
+    "title": "GDP m/m",
+    "country": "CAD",
+    "impact": "High",
+    "date": "2026-08-28T16:30:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "12:30pm",
+    "forecast": "0.2%",
+    "previous": "0.3%"
+  },
+  {
+    "title": "FOMC Member Hammack Speaks",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-28T17:00:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "1:00pm",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "Chicago PMI",
+    "country": "USD",
+    "impact": "Low",
+    "date": "2026-08-28T17:45:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "1:45pm",
+    "forecast": "57.9",
+    "previous": "57.6"
+  },
+  {
+    "title": "Fed Chairman Warsh Speaks",
+    "country": "USD",
+    "impact": "High",
+    "date": "2026-08-28T18:00:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "2:00pm",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "Prelim Benchmark Payrolls Revision",
+    "country": "USD",
+    "impact": "High",
+    "date": "2026-08-28T18:00:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "2:00pm",
+    "forecast": "",
+    "previous": "-911K"
+  },
+  {
+    "title": "Revised UoM Consumer Sentiment",
+    "country": "USD",
+    "impact": "Medium",
+    "date": "2026-08-28T18:00:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "2:00pm",
+    "forecast": "51.0",
+    "previous": "51.0"
+  },
+  {
+    "title": "Revised UoM Inflation Expectations",
+    "country": "USD",
+    "impact": "Medium",
+    "date": "2026-08-28T18:00:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "2:00pm",
+    "forecast": "",
+    "previous": "4.3%"
+  },
+  {
+    "title": "MPC Member Mann Speaks",
+    "country": "GBP",
+    "impact": "Low",
+    "date": "2026-08-28T18:30:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "2:30pm",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "Jackson Hole Symposium",
+    "country": "ALL",
+    "impact": "High",
+    "date": "2026-08-28T20:15:00+00:00",
+    "raw_date": "08-28-2026",
+    "raw_time": "4:15pm",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "G20 Meetings",
+    "country": "ALL",
+    "impact": "Low",
+    "date": "2026-08-29T19:15:00+00:00",
+    "raw_date": "08-29-2026",
+    "raw_time": "3:15pm",
+    "forecast": "",
+    "previous": ""
+  },
+  {
+    "title": "Jackson Hole Symposium",
+    "country": "ALL",
+    "impact": "Medium",
+    "date": "2026-08-29T20:15:00+00:00",
+    "raw_date": "08-29-2026",
+    "raw_time": "4:15pm",
+    "forecast": "",
+    "previous": ""
+  }
+]
