@@ -32,7 +32,7 @@ def train_model(
     dataset_path: str = "data/strategy_ml_dataset.csv",
     model_output_path: str = "models/xgb_strategy_model.pkl",
     meta_output_path: str = "models/xgb_metadata.json",
-    confidence_threshold: float = 0.50,
+    confidence_threshold: float = 0.55,
     max_depth: int = 3,
     learning_rate: float = 0.03,
     early_stopping_rounds: int = 15,

@@ -64,6 +64,9 @@ def label_signals_triple_barrier(
 
         risk_dist = abs(entry - sl)
         be_dist = 1.0 * risk_dist
+        fvg_top_val = float(row["fvg_top"]) if not pd.isna(row.get("fvg_top")) else None
+        fvg_bot_val = float(row["fvg_bottom"]) if not pd.isna(row.get("fvg_bottom")) else None
+        fvg_info = {"top": fvg_top_val, "bottom": fvg_bot_val} if fvg_top_val and fvg_bot_val else None
 
         # Extract features
         feats = extract_features_for_signal(
@@ -71,6 +74,9 @@ def label_signals_triple_barrier(
             idx=idx,
             signal_side=sig,
             pip_size=pip_size,
+            fvg=fvg_info,
+            peak_high=sl if sig == -1 else None,
+            valley_low=sl if sig == 1 else None,
         )
 
         # Forward simulate price path

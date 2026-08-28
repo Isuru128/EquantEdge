@@ -2,12 +2,15 @@
 ml_features.py
 
 Feature engineering module for 15M FVG + 1M MSS Strategy ML Meta-Labeling.
-Extracts market microstructure, displacement velocity, FVG depth, candlestick anatomy, and session context.
+Extracts institutional SMC features: Liquidity Sweeps, Killzone timing, FVG penetration depth,
+displacement momentum, volume surge, candlestick anatomy, and session microstructure.
 """
 
+from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
+_NY_TZ = ZoneInfo("America/New_York")
 
 FEATURE_COLUMNS = [
     "signal_side",          # 1 for BUY, -1 for SELL
@@ -19,7 +22,11 @@ FEATURE_COLUMNS = [
     "rsi_14",               # 1M RSI (14)
     "atr_14",               # 1M Average True Range (14)
     "volume_ratio",         # Volume vs 20-period moving average
-    "hour",                 # Hour of day (0-23)
+    "disp_volume_surge",    # Volume surge on breakout candle
+    "is_liquidity_sweep",   # 1 if setup swept prior local/session liquidity, 0 otherwise
+    "is_killzone",          # 1 if in London Open (02-05 NY) or NY AM (07-10 NY), 0 otherwise
+    "fvg_penetration_pct",  # Percentage depth penetration into 15M FVG
+    "hour",                 # Hour of day (0-23 UTC)
     "minute",               # Minute of hour (0-59)
     "session_code",         # 0=Asia, 1=London, 2=NY, 3=Other
 ]
@@ -72,6 +79,22 @@ def compute_technical_indicators(
     return df
 
 
+def _is_killzone_time(dt: pd.Timestamp) -> int:
+    """Return 1 if within London Open (02-05 NY) or NY AM (07-10 NY) Killzones."""
+    try:
+        if dt.tzinfo is None:
+            dt_ny = dt.tz_localize("UTC").astimezone(_NY_TZ)
+        else:
+            dt_ny = dt.astimezone(_NY_TZ)
+        hour = dt_ny.hour
+        # London Open: 02:00 - 05:00 NY | NY AM: 07:00 - 10:00 NY
+        if (2 <= hour < 5) or (7 <= hour < 10):
+            return 1
+        return 0
+    except Exception:
+        return 0
+
+
 def _get_session_code(dt: pd.Timestamp) -> int:
     """Classify UTC hour into sessions: Asia=0, London=1, NY=2, Other=3."""
     hour = dt.hour
@@ -90,10 +113,12 @@ def extract_features_for_signal(
     idx: int,
     signal_side: int,
     pip_size: float = 0.0001,
-    htf_trend_dir: int = 1,
+    fvg: dict | None = None,
+    peak_high: float | None = None,
+    valley_low: float | None = None,
 ) -> dict:
     """
-    Extract a dictionary of ML features for a trade setup triggered at index `idx`.
+    Extract a comprehensive dictionary of ML features for a trade setup triggered at index `idx`.
     """
     if "rsi_14" not in df or "atr_14" not in df:
         df = compute_technical_indicators(df)
@@ -117,9 +142,37 @@ def extract_features_for_signal(
     ema_val = float(curr.get("ema_50", curr["close"]))
     dist_to_ema = (curr["close"] - ema_val) / (atr + 1e-6)
 
+    # 1. Liquidity Sweep Detection
+    start_lookback = max(0, idx - 25)
+    lookback_window = df.iloc[start_lookback:idx]
+    is_sweep = 0
+    if not lookback_window.empty:
+        if signal_side == -1:  # SELL (Check if peak swept previous high)
+            high_level = peak_high if peak_high is not None else curr["high"]
+            prior_max_high = lookback_window["high"].iloc[:-3].max() if len(lookback_window) > 3 else lookback_window["high"].max()
+            if high_level >= prior_max_high:
+                is_sweep = 1
+        elif signal_side == 1:  # BUY (Check if valley swept previous low)
+            low_level = valley_low if valley_low is not None else curr["low"]
+            prior_min_low = lookback_window["low"].iloc[:-3].min() if len(lookback_window) > 3 else lookback_window["low"].min()
+            if low_level <= prior_min_low:
+                is_sweep = 1
+
+    # 2. FVG Penetration Depth %
+    fvg_depth_pct = 0.50
+    if fvg and "top" in fvg and "bottom" in fvg:
+        fvg_size = max(1e-5, fvg["top"] - fvg["bottom"])
+        if signal_side == -1 and peak_high is not None:
+            fvg_depth_pct = min(1.0, max(0.0, (peak_high - fvg["bottom"]) / fvg_size))
+        elif signal_side == 1 and valley_low is not None:
+            fvg_depth_pct = min(1.0, max(0.0, (fvg["top"] - valley_low) / fvg_size))
+
+    # 3. Volume Surge
+    vol_ratio = float(curr.get("volume_ratio", 1.0))
+    disp_surge = float(prev.get("volume_ratio", vol_ratio))
+
     features = {
         "signal_side":          int(signal_side),
-        "htf_trend_dir":        int(htf_trend_dir),
         "body_to_range":        float(round(c_body / c_range, 4)),
         "break_displacement":   float(round(break_disp, 2)),
         "rejection_wick_ratio": float(round(rejection_wick / c_range, 4)),
@@ -127,7 +180,11 @@ def extract_features_for_signal(
         "dist_to_15m_ema50":    float(round(dist_to_ema, 4)),
         "rsi_14":               float(round(curr.get("rsi_14", 50.0), 2)),
         "atr_14":               float(round(atr, 5)),
-        "volume_ratio":         float(round(curr.get("volume_ratio", 1.0), 3)),
+        "volume_ratio":         float(round(vol_ratio, 3)),
+        "disp_volume_surge":    float(round(disp_surge, 3)),
+        "is_liquidity_sweep":   int(is_sweep),
+        "is_killzone":          int(_is_killzone_time(dt)),
+        "fvg_penetration_pct":  float(round(fvg_depth_pct, 4)),
         "hour":                 int(dt.hour),
         "minute":               int(dt.minute),
         "session_code":         int(_get_session_code(dt)),
