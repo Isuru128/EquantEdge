@@ -6,28 +6,37 @@ Live automated execution engine for the 15M Fair Value Gap (FVG) + 1M Market Str
 Assets: EURUSD, GBPUSD, AUDUSD.
 Timeframe: 15-Minute HTF Trend & FVG + 1-Minute LTF Market Structure Shift.
 Session Restriction: Trades BLOCKED between 14:00 - 20:00 New York time (UTC-4 / UTC-5).
-Risk: 1.0% per trade (fixed 1:2.0 RR).
+News Protection: Automatically BLOCKS trade entry 30m before & 30m after High-Impact news releases via Forex Factory API.
+Risk: 1.0% per trade (fixed 1:2.0 RR, 50% partial scale-out at +1.0R, trailing SL to breakeven).
+ML Filter: XGBoost Meta-Labeling Classifier (p >= 0.55).
 """
 
 import time
 from zoneinfo import ZoneInfo
 import MetaTrader5 as mt5
 from datetime import datetime, timezone
-
 import os
 import sys
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from src.connect import connect, get_candles
-    from src.strategy import get_latest_signal, STRATEGY_NAME, SUPPORTED_SYMBOLS
-    from src.execution import place_order, set_dry_run, DRY_RUN, modify_position_sl, _pip_size
+    from src.strategy import get_latest_signal, STRATEGY_NAME, SUPPORTED_SYMBOLS, MIN_SL_PIPS
+    from src.execution import (
+        place_order, set_dry_run, DRY_RUN, modify_position_sl, 
+        partial_close_position, _pip_size
+    )
+    from src.news_filter import is_news_blackout, get_upcoming_high_impact_events
     import src.execution as execution
     import src.db as db
 else:
     from .connect import connect, get_candles
-    from .strategy import get_latest_signal, STRATEGY_NAME, SUPPORTED_SYMBOLS
-    from .execution import place_order, set_dry_run, DRY_RUN, modify_position_sl, _pip_size
+    from .strategy import get_latest_signal, STRATEGY_NAME, SUPPORTED_SYMBOLS, MIN_SL_PIPS
+    from .execution import (
+        place_order, set_dry_run, DRY_RUN, modify_position_sl, 
+        partial_close_position, _pip_size
+    )
+    from .news_filter import is_news_blackout, get_upcoming_high_impact_events
     from . import execution
     from . import db
 
@@ -38,12 +47,11 @@ CANDLES_1M      = 300                # 1-minute lookback bars
 CANDLES_15M     = 150                # 15-minute lookback bars (>= 96 bars for FVG)
 POLL_SECS       = 10                 # Poll every 10 seconds
 RISK_PCT        = 1.0                # 1.0% risk per trade
+NEWS_BUFFER_MINS= 30                 # 30-minute blackout before/after High Impact news
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 # ── Trading Hours — New York time (UTC-4 / UTC-5) ─────────────────────────────
-# Rule: Do NOT execute trades between 14:00 - 20:00 New York time.
-# Allowed Window: 20:00 (evening) to 14:00 (afternoon next day).
 BLOCKED_START_HOUR = 14
 BLOCKED_START_MIN  = 0
 BLOCKED_END_HOUR   = 20
@@ -67,7 +75,6 @@ def is_trading_allowed_now() -> bool:
     block_start_mins = BLOCKED_START_HOUR * 60 + BLOCKED_START_MIN  # 14:00 -> 840 mins
     block_end_mins   = BLOCKED_END_HOUR * 60 + BLOCKED_END_MIN      # 20:00 -> 1200 mins
 
-    # Blocked if between 14:00 and 20:00
     if block_start_mins <= now_mins < block_end_mins:
         return False
     return True
@@ -134,14 +141,25 @@ def main() -> None:
         elif arg.startswith("--symbol="):
             symbols = [arg.split("=")[1].strip()]
 
-    print(f"EquantEdge — Multi-Asset Live Trading [{STRATEGY_NAME}]")
-    print(f"Mode     : {'[DRY RUN — simulation only]' if execution.DRY_RUN else '⚡ REALTIME LIVE TRADING (Sending Real Orders to MT5)'}")
-    print(f"Symbols  : {', '.join(symbols)}  |  Risk: {RISK_PCT}% per trade (1:2.0 RR)")
+    print("=" * 75)
+    print(f"  EQUANTEDGE — MULTI-ASSET LIVE TRADING [{STRATEGY_NAME}]")
+    print("=" * 75)
+    print(f"Mode         : {'[DRY RUN — simulation only]' if execution.DRY_RUN else '⚡ REALTIME LIVE TRADING (Sending Real Orders to MT5)'}")
+    print(f"Symbols      : {', '.join(symbols)}  |  Risk: {RISK_PCT}% per trade (1:2.0 RR)")
     ny_now = datetime.now(tz=_NY_TZ)
     utc_offset = int(ny_now.utcoffset().total_seconds() // 3600)
     tz_abbr = ny_now.strftime("%Z")
-    print(f"Timezone : America/New_York ({tz_abbr}, UTC{utc_offset:+d})")
-    print("Execution: Active 20:00 - 14:00 NY | BLOCKED 14:00 - 20:00 NY")
+    print(f"Timezone     : America/New_York ({tz_abbr}, UTC{utc_offset:+d}) | Gate: Active 20:00-14:00 NY (Blocked 14:00-20:00 NY)")
+    print(f"News Guard   : Forex Factory API Active ({NEWS_BUFFER_MINS}m Blackout Before/After High Impact Events)")
+    
+    # Check upcoming High-Impact events
+    upcoming_events = get_upcoming_high_impact_events(hours_ahead=24)
+    if upcoming_events:
+        print(f"\n[News Guard] 📅 Upcoming High-Impact Events Next 24 Hours:")
+        for ev in upcoming_events[:5]:
+            print(f"  • [{ev['country']}] {ev['title']:<32} in {ev['minutes_away']} mins (Forecast: {ev['forecast']}, Prev: {ev['previous']})")
+    else:
+        print("\n[News Guard] ✅ No High-Impact events scheduled in next 24 hours for target currencies.")
     print("Press Ctrl+C to stop.\n")
 
     account = connect()
@@ -152,7 +170,7 @@ def main() -> None:
 
     try:
         while True:
-            # ── Check open positions (Close detection & Breakeven Trailing) ────
+            # ── Check open positions (Close detection & Partial Breakeven Trailing) ──
             for sym, ticket in list(open_tickets.items()):
                 if ticket and ticket > 0:
                     pos = mt5.positions_get(ticket=ticket)
@@ -185,17 +203,19 @@ def main() -> None:
                             risk_dist = meta["risk_dist"]
                             pip = _pip_size(sym)
 
-                            # Trailing SL to breakeven after +1.0R
+                            # 50% Partial Profit Scale-Out & SL to Breakeven after +1.0R
                             if sig_side == 1 and p.price_current >= (entry + risk_dist):
+                                partial_close_position(ticket, sym, close_ratio=0.50)
                                 new_sl = entry + (1.0 * pip)
                                 if modify_position_sl(ticket, sym, new_sl):
                                     meta["be_moved"] = True
-                                    print(f"[{datetime.now().strftime('%H:%M:%S')}][{sym}] 🎯 +1.0R Reached! Trailed SL to Breakeven ({new_sl})")
+                                    print(f"[{datetime.now().strftime('%H:%M:%S')}][{sym}] 🎯 +1.0R Reached! Secured 50% Profit & Trailed Runner SL to Breakeven ({new_sl})")
                             elif sig_side == -1 and p.price_current <= (entry - risk_dist):
+                                partial_close_position(ticket, sym, close_ratio=0.50)
                                 new_sl = entry - (1.0 * pip)
                                 if modify_position_sl(ticket, sym, new_sl):
                                     meta["be_moved"] = True
-                                    print(f"[{datetime.now().strftime('%H:%M:%S')}][{sym}] 🎯 +1.0R Reached! Trailed SL to Breakeven ({new_sl})")
+                                    print(f"[{datetime.now().strftime('%H:%M:%S')}][{sym}] 🎯 +1.0R Reached! Secured 50% Profit & Trailed Runner SL to Breakeven ({new_sl})")
 
             # ── Trading Hours Gate ────────────────────────────────────────────
             if not is_trading_allowed_now():
@@ -227,6 +247,23 @@ def main() -> None:
 
                     # ── Place order on confirmed MSS signal ───────────────────
                     if sig.get("signal", 0) != 0 and open_tickets.get(sym) is None:
+                        # 1. High-Impact News Filter Check
+                        is_blocked, news_reason = is_news_blackout(
+                            symbol=sym,
+                            buffer_before_mins=NEWS_BUFFER_MINS,
+                            buffer_after_mins=NEWS_BUFFER_MINS,
+                        )
+                        if is_blocked:
+                            print(f"[{datetime.now().strftime('%H:%M:%S')}][{sym}] ⏸ ORDER SKIPPED: {news_reason}")
+                            continue
+
+                        # 2. Minimum Stop Loss Check
+                        sl_pips = sig.get("sl_pips", 0) or 0
+                        if sl_pips < MIN_SL_PIPS:
+                            print(f"[{datetime.now().strftime('%H:%M:%S')}][{sym}] ⚠️ MSS signal skipped: Measured SL ({sl_pips:.1f} pips) < {MIN_SL_PIPS:.1f} pips threshold.")
+                            continue
+
+                        # 3. Dispatch Market Order
                         sess_name = get_current_session_label()
                         ticket = place_order(
                             symbol=sym,
@@ -238,6 +275,7 @@ def main() -> None:
                             tp_pips=sig.get("tp_pips"),
                             account_balance=account.balance if account else 10000.0,
                             risk_pct=RISK_PCT,
+                            comment="EquantEdge 1M",
                             session=sess_name,
                             ema_50=sig.get("fvg_top"),
                         )

@@ -25,10 +25,10 @@ import numpy as np
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from src.strategy import generate_signals, resample_1m_to_15m, _detect_pip_size, RR_RATIO, SUPPORTED_SYMBOLS
+    from src.strategy import generate_signals, resample_1m_to_15m, _detect_pip_size, RR_RATIO, SUPPORTED_SYMBOLS, MIN_SL_PIPS
     from src.connect import connect, get_candles
 else:
-    from .strategy import generate_signals, resample_1m_to_15m, _detect_pip_size, RR_RATIO, SUPPORTED_SYMBOLS
+    from .strategy import generate_signals, resample_1m_to_15m, _detect_pip_size, RR_RATIO, SUPPORTED_SYMBOLS, MIN_SL_PIPS
     from .connect import connect, get_candles
 
 _NY_TZ = ZoneInfo("America/New_York")
@@ -106,7 +106,7 @@ def run_backtest_on_data(
             continue
 
         risk_dist = abs(entry - sl)
-        if risk_dist <= (0.5 * pip_size):
+        if (risk_dist / pip_size) < MIN_SL_PIPS:
             continue
 
         risk_usd = fixed_risk_usd
@@ -186,24 +186,25 @@ def run_backtest_on_data(
             else:
                 outcome = "EXPIRED_LOSS"
 
-        # Calculate PnL in USD & R-multiples
+        # Calculate PnL in USD & R-multiples (with 50% scale-out at +1.0R)
         if outcome == "WIN":
-            pnl_r = rr_ratio
-            pnl_usd = risk_usd * rr_ratio
+            # 50% locked at +1.0R (+0.5R) + 50% reached +2.0R (+1.0R) = +1.50R total
+            pnl_r = 1.50
+            pnl_usd = risk_usd * 1.50
         elif outcome == "LOSS":
             pnl_r = -1.0
             pnl_usd = -risk_usd
         elif outcome == "BREAKEVEN":
-            pnl_r = 0.0
-            pnl_usd = 0.0
+            # 50% locked at +1.0R (+0.5R) + 50% runner stopped at BE ($0.0R) = +0.50R secured!
+            pnl_r = 0.50
+            pnl_usd = risk_usd * 0.50
         elif outcome == "EXPIRED_PROFIT":
             ratio = min(rr_ratio, abs(exit_price - entry) / risk_dist)
-            pnl_r = ratio
-            pnl_usd = risk_usd * ratio
+            pnl_r = 0.50 + (0.50 * ratio) if be_active else ratio
+            pnl_usd = risk_usd * pnl_r
         else:
-            ratio = min(1.0, abs(exit_price - entry) / risk_dist)
-            pnl_r = -ratio
-            pnl_usd = -risk_usd * ratio
+            pnl_r = 0.50 if be_active else -min(1.0, abs(exit_price - entry) / risk_dist)
+            pnl_usd = risk_usd * pnl_r
 
         current_balance += pnl_usd
 
