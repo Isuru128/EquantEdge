@@ -241,8 +241,8 @@ def fetch_multi_symbol_state(selected_symbol: str = DEFAULT_SYMBOL) -> dict:
             "multi_data": multi_data,
             "active_symbol": selected_symbol,
             "account": {
-                "balance": 10000.0,
-                "equity": 10000.0,
+                "balance": 5000.0,
+                "equity": 5000.0,
                 "currency": "USD",
                 "profit": 0.0,
                 "login": "SIMULATION",
@@ -1122,7 +1122,7 @@ class EquantEdgeDashboard(tk.Tk):
 
         fields = [
             ("Symbol",             "symbol",   "XAUUSD"),
-            ("Account Balance ($)", "balance",  "100.0"),
+            ("Account Balance ($)", "balance",  "5000.0"),
             ("Risk % of Balance",  "risk_pct", "1.0"),
             ("Stop-Loss (pips)",   "sl_pips",  "15.0"),
             ("Pip Value ($/lot)",  "pip_val",  "1.0"),
