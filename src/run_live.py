@@ -48,6 +48,7 @@ CANDLES_15M     = 150                # 15-minute lookback bars (>= 96 bars for F
 POLL_SECS       = 10                 # Poll every 10 seconds
 RISK_PCT        = 1.0                # 1.0% risk per trade
 NEWS_BUFFER_MINS= 30                 # 30-minute blackout before/after High Impact news
+INITIAL_BALANCE = 5000.0             # Default starting balance in USD
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -273,7 +274,7 @@ def main() -> None:
                             tp_price=sig.get("tp_price"),
                             sl_pips=sig.get("sl_pips"),
                             tp_pips=sig.get("tp_pips"),
-                            account_balance=account.balance if account else 10000.0,
+                            account_balance=account.balance if account else INITIAL_BALANCE,
                             risk_pct=RISK_PCT,
                             comment="EquantEdge 1M",
                             session=sess_name,
