@@ -113,7 +113,7 @@ def place_order(
     entry_price: float,     # entry level
     sl_pips: float | None = None,
     tp_pips: float | None = None,
-    account_balance: float = 10000.0,
+    account_balance: float = 5000.0,
     risk_pct: float = 1.0,
     comment: str = "EquantEdge LS",
     session: str | None = None,
