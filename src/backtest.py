@@ -308,7 +308,7 @@ def main():
     parser.add_argument("--symbols", type=str, default="EURUSD,GBPUSD,AUDUSD", help="Comma-separated symbols")
     parser.add_argument("--symbol", type=str, default=None, help="Single symbol backtest")
     parser.add_argument("--candles", type=int, default=30000, help="Number of 1M candles to test")
-    parser.add_argument("--balance", type=float, default=10000.0, help="Starting account balance")
+    parser.add_argument("--balance", type=float, default=5000.0, help="Starting account balance")
     parser.add_argument("--risk", type=float, default=1.0, help="Risk percent per trade")
     parser.add_argument("--rr", type=float, default=2.0, help="Risk-to-reward ratio")
     parser.add_argument("--offline", action="store_true", help="Run in offline simulation mode without MT5 connection")
