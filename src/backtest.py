@@ -25,10 +25,16 @@ import numpy as np
 
 if __package__ is None or __package__ == "":
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from src.strategy import generate_signals, resample_1m_to_15m, _detect_pip_size, RR_RATIO, SUPPORTED_SYMBOLS, MIN_SL_PIPS
+    from src.strategy import (
+        generate_signals, resample_1m_to_15m, _detect_pip_size, 
+        RR_RATIO, SUPPORTED_SYMBOLS, MIN_SL_PIPS, is_prime_killzone
+    )
     from src.connect import connect, get_candles
 else:
-    from .strategy import generate_signals, resample_1m_to_15m, _detect_pip_size, RR_RATIO, SUPPORTED_SYMBOLS, MIN_SL_PIPS
+    from .strategy import (
+        generate_signals, resample_1m_to_15m, _detect_pip_size, 
+        RR_RATIO, SUPPORTED_SYMBOLS, MIN_SL_PIPS, is_prime_killzone
+    )
     from .connect import connect, get_candles
 
 _NY_TZ = ZoneInfo("America/New_York")
@@ -61,7 +67,6 @@ def run_backtest_on_data(
     risk_pct: float = 1.0,
     rr_ratio: float = RR_RATIO,
     max_hold_bars: int = 60,
-    enforce_time_filter: bool = True,
 ) -> dict:
     """
     Run backtest simulation over 1-minute historical candles.
@@ -76,7 +81,13 @@ def run_backtest_on_data(
 
     # 1. Generate strategy signals across full dataset
     print(f"[{symbol}] Generating multi-timeframe signals across {len(df_1m):,} 1M candles...")
-    df_signals = generate_signals(df_1m, df_15m=df_15m, symbol=symbol, rr_ratio=rr_ratio, pip_size=pip_size)
+    df_signals = generate_signals(
+        df_1m,
+        df_15m=df_15m,
+        symbol=symbol,
+        rr_ratio=rr_ratio,
+        pip_size=pip_size,
+    )
 
     signal_indices = df_signals.index[df_signals["signal"] != 0].tolist()
     print(f"[{symbol}] Found {len(signal_indices)} raw MSS setups. Simulating sequential trade executions...")
@@ -100,10 +111,6 @@ def run_backtest_on_data(
         tp = float(row["tp_price"])
         entry = float(row["entry_price"])
         dt = row.get("datetime", "")
-
-        # Session / Time Window Filter (14:00 - 20:00 NY exclusion)
-        if enforce_time_filter and not is_time_allowed_ny(dt):
-            continue
 
         risk_dist = abs(entry - sl)
         if (risk_dist / pip_size) < MIN_SL_PIPS:
@@ -317,10 +324,10 @@ def main():
     symbols = [args.symbol] if args.symbol else [s.strip() for s in args.symbols.split(",") if s.strip()]
 
     print("\n" + "=" * 78)
-    print("  EQUANTEDGE -- 15M FVG + 1M MARKET STRUCTURE SHIFT (MSS) BACKTESTER")
+    print("  EQUANTEDGE -- BASIC 15M FVG + 1M MARKET STRUCTURE SHIFT (MSS) BACKTESTER")
     print(f"  Symbols: {', '.join(symbols)} | Lookback: {args.candles:,} 1M bars | Starting Balance: ${args.balance:,.2f}")
     print(f"  Risk: {args.risk}% per trade | Target: 1:{args.rr:.1f} RR | Breakeven Trail: +1.0R")
-    print("  Session Gate: 14:00 - 20:00 NY Exclusion Enforced")
+    print("  Mode: PURE 15M FVG + 1M MSS (All Extra Filters Removed)")
     print("=" * 78 + "\n")
 
     if not args.offline:
