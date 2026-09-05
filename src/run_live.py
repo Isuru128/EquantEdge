@@ -218,18 +218,6 @@ def main() -> None:
                                     meta["be_moved"] = True
                                     print(f"[{datetime.now().strftime('%H:%M:%S')}][{sym}] 🎯 +1.0R Reached! Secured 50% Profit & Trailed Runner SL to Breakeven ({new_sl})")
 
-            # ── Trading Hours Gate ────────────────────────────────────────────
-            if not is_trading_allowed_now():
-                now_minute = _now_ny().strftime("%H:%M")
-                if now_minute != last_out_log_min:
-                    last_out_log_min = now_minute
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}]  "
-                          f"{_session_status_line()} — waiting for 20:00 NY open.")
-                time.sleep(POLL_SECS)
-                continue
-
-            last_out_log_min = None
-
             # ── Multi-Symbol Candle Evaluation Loop ───────────────────────────
             for sym in symbols:
                 # Fetch 15M HTF candles + 1M LTF candles
@@ -239,7 +227,7 @@ def main() -> None:
                 if df_1m.empty or len(df_1m) < 15:
                     continue
 
-                sig = get_latest_signal(df=df_1m, df_15m=df_15m, symbol=sym, use_ml=True)
+                sig = get_latest_signal(df=df_1m, df_15m=df_15m, symbol=sym)
                 bar_time = sig.get("datetime")
 
                 if bar_time != last_seen_bars.get(sym):
@@ -248,23 +236,13 @@ def main() -> None:
 
                     # ── Place order on confirmed MSS signal ───────────────────
                     if sig.get("signal", 0) != 0 and open_tickets.get(sym) is None:
-                        # 1. High-Impact News Filter Check
-                        is_blocked, news_reason = is_news_blackout(
-                            symbol=sym,
-                            buffer_before_mins=NEWS_BUFFER_MINS,
-                            buffer_after_mins=NEWS_BUFFER_MINS,
-                        )
-                        if is_blocked:
-                            print(f"[{datetime.now().strftime('%H:%M:%S')}][{sym}] ⏸ ORDER SKIPPED: {news_reason}")
-                            continue
-
-                        # 2. Minimum Stop Loss Check
+                        # Minimum Stop Loss Check (broker safeguard)
                         sl_pips = sig.get("sl_pips", 0) or 0
                         if sl_pips < MIN_SL_PIPS:
                             print(f"[{datetime.now().strftime('%H:%M:%S')}][{sym}] ⚠️ MSS signal skipped: Measured SL ({sl_pips:.1f} pips) < {MIN_SL_PIPS:.1f} pips threshold.")
                             continue
 
-                        # 3. Dispatch Market Order
+                        # Dispatch Market Order
                         sess_name = get_current_session_label()
                         ticket = place_order(
                             symbol=sym,
