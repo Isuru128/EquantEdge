@@ -68,10 +68,11 @@ USE_ML_FILTER           = True
 _NY_TZ = ZoneInfo("America/New_York")
 
 
-def is_eurusd_prime_killzone(dt) -> bool:
+def is_prime_killzone(dt) -> bool:
     """
-    Validate that EURUSD trade occurs during London Open (02:00 - 05:00 NY)
+    Validate that trade occurs during London Open (02:00 - 05:00 NY)
     or New York AM (07:00 - 11:30 NY) Killzones to eliminate choppy drift.
+    Applies to all high-liquidity forex majors (EURUSD, GBPUSD, AUDUSD).
     """
     if dt is None:
         return True
@@ -92,6 +93,9 @@ def is_eurusd_prime_killzone(dt) -> bool:
         return False
     except Exception:
         return True
+
+
+is_eurusd_prime_killzone = is_prime_killzone
 
 
 _ml_model_cache = None
@@ -180,13 +184,10 @@ def generate_signals(
     min_sl_pips: float = MIN_SL_PIPS,
 ) -> pd.DataFrame:
     """
-    Scan historical DataFrame and generate 15M FVG + 1M MSS signals across all candles.
+    Scan historical DataFrame and generate pure 15M FVG + 1M MSS signals across all candles.
     """
     if pip_size is None:
         pip_size = _detect_pip_size(df_1m, symbol=symbol)
-
-    if symbol == "EURUSD":
-        min_sl_pips = max(min_sl_pips, EURUSD_MIN_SL_PIPS)
 
     if df_15m is None or df_15m.empty:
         df_15m = resample_1m_to_15m(df_1m)
@@ -212,20 +213,9 @@ def generate_signals(
     if not all_fvgs:
         return df_out
 
-    # Build FVG lookup list with timestamp or index for fast evaluation
-    # For each 1M bar, check if price interacts with any active 15M FVG (within 96 M15 bars = 1440 M1 bars)
-    # Group FVGs into Bearish & Bullish
-    bearish_fvgs = [f for f in all_fvgs if f["direction"] == -1]
-    # Extract NumPy arrays for ultra-fast vectorized scanning
-    highs = df_1m["high"].to_numpy(dtype=float)
-    lows = df_1m["low"].to_numpy(dtype=float)
-    closes = df_1m["close"].to_numpy(dtype=float)
     datetimes = df_1m["datetime"].astype(str).values if "datetime" in df_1m.columns else None
 
-    bearish_fvgs = [f for f in all_fvgs if f["direction"] == -1]
-    bullish_fvgs = [f for f in all_fvgs if f["direction"] == 1]
-
-    lookback = 30
+    lookback = 15
     cooldown_until = 0
 
     signals = np.zeros(n_1m, dtype=int)
@@ -244,13 +234,7 @@ def generate_signals(
             continue
 
         bar_time = datetimes[i] if datetimes is not None else None
-        
-        # Stricter session filter for EURUSD: must be within London/NY Killzones
-        if symbol == "EURUSD" and not is_eurusd_prime_killzone(bar_time):
-            continue
 
-        curr_price = float(closes[i - 1]) if i >= 1 else float(closes[i])
-        
         # Check active FVGs matching the current bar timestamp
         active_fvgs = [
             f for f in all_fvgs
@@ -263,6 +247,7 @@ def generate_signals(
 
         for fvg in active_fvgs[:6]:
             side = fvg["direction"]
+
             mss = detect_market_structure_shift(
                 df_1m=sub_df,
                 fvg=fvg,
@@ -310,21 +295,17 @@ def get_latest_signal(
     rr_ratio: float = RR_RATIO,
     pip_size: float | None = None,
     min_sl_pips: float = MIN_SL_PIPS,
-    use_ml: bool = USE_ML_FILTER,
-    confidence_threshold: float = ML_CONFIDENCE_THRESHOLD,
+    use_ml: bool = False,
+    confidence_threshold: float = 0.50,
 ) -> dict:
     """
-    Evaluate the most recently closed 1-minute candle for a confirmed 15M FVG + 1M MSS setup.
+    Evaluate the most recently closed 1-minute candle for a confirmed basic 15M FVG + 1M MSS setup.
     """
     if len(df) < 15:
         return {"signal": 0, "reason": "Not enough 1M candles (need >= 15)"}
 
     if pip_size is None:
         pip_size = _detect_pip_size(df, symbol=symbol)
-
-    if symbol == "EURUSD":
-        confidence_threshold = max(confidence_threshold, EURUSD_MIN_CONFIDENCE)
-        min_sl_pips = max(min_sl_pips, EURUSD_MIN_SL_PIPS)
 
     if df_15m is None or df_15m.empty:
         df_15m = resample_1m_to_15m(df)
@@ -335,31 +316,6 @@ def get_latest_signal(
 
     bar = df.iloc[-2]
     prev_bar = df.iloc[-3] if len(df) >= 3 else bar
-
-    # Killzone check for EURUSD to avoid low-liquidity chop
-    if symbol == "EURUSD" and not is_eurusd_prime_killzone(bar.get("datetime")):
-        result = {
-            "datetime": bar["datetime"] if "datetime" in bar else None,
-            "signal": 0,
-            "label": "FILTERED: EURUSD outside Prime Killzones (02:00-05:00 / 07:00-11:30 NY)",
-            "close": float(bar["close"]),
-            "open": float(bar["open"]),
-            "high": float(bar["high"]),
-            "low": float(bar["low"]),
-            "fvg_active": nearest_fvg is not None,
-            "fvg_top": nearest_fvg["top"] if nearest_fvg else None,
-            "fvg_bottom": nearest_fvg["bottom"] if nearest_fvg else None,
-            "fvg_type": nearest_fvg["type"] if nearest_fvg else None,
-            "entry_price": float(bar["close"]),
-            "sl_price": None,
-            "tp_price": None,
-            "risk_distance": None,
-            "sl_pips": None,
-            "tp_pips": None,
-            "xgb_prob": None,
-            "ml_filtered": True,
-        }
-        return result
 
     result = {
         "datetime": bar["datetime"] if "datetime" in bar else None,
@@ -390,7 +346,7 @@ def get_latest_signal(
     if not fvgs:
         return result
 
-    # Check both Bearish and Bullish active FVGs
+    # Check active FVGs
     for fvg in fvgs[:10]:
         side = fvg["direction"]
         mss = detect_market_structure_shift(
@@ -406,7 +362,7 @@ def get_latest_signal(
         if mss is not None:
             sig = mss["signal"]
             sl_pips_val = round(mss["sl_pips"], 1)
-            
+
             if sl_pips_val < min_sl_pips:
                 continue
 
@@ -423,38 +379,6 @@ def get_latest_signal(
 
             dir_name = "BUY" if sig == 1 else "SELL"
             result["label"] = f"{dir_name} MSS RETEST (15M FVG + 1M Pivot | 1:{rr_ratio:.1f} RR)"
-
-            if use_ml:
-                model = get_ml_model()
-                if model is not None:
-                    try:
-                        if __package__ is None or __package__ == "":
-                            from src.ml_features import extract_features_for_signal, FEATURE_COLUMNS
-                        else:
-                            from .ml_features import extract_features_for_signal, FEATURE_COLUMNS
-
-                        feats = extract_features_for_signal(
-                            df=df,
-                            idx=len(df) - 2,
-                            signal_side=sig,
-                            pip_size=pip_size,
-                            fvg=fvg,
-                            peak_high=mss.get("peak_high"),
-                            valley_low=mss.get("valley_low"),
-                        )
-                        feats_df = pd.DataFrame([[feats[col] for col in FEATURE_COLUMNS]], columns=FEATURE_COLUMNS)
-                        prob = float(model.predict_proba(feats_df)[0][1])
-                        result["xgb_prob"] = round(prob, 4)
-
-                        if prob < confidence_threshold:
-                            result["ml_filtered"] = True
-                            result["signal"] = 0
-                            result["label"] = f"FILTERED by ML (Win Prob: {prob*100:.1f}% < {confidence_threshold*100:.0f}%)"
-                        else:
-                            result["ml_filtered"] = False
-                            result["label"] += f" | [ML Conf: {prob*100:.1f}%]"
-                    except Exception as exc:
-                        print(f"[Strategy] Warning during ML inference: {exc}")
             break
 
     return result
