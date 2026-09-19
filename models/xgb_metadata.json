@@ -20,7 +20,7 @@
   "base_win_rate_pct": 43.27,
   "cv_filtered_win_rate_pct": 48.6,
   "cv_auc": 0.592,
-  "confidence_threshold": 0.5,
+  "confidence_threshold": 0.58,
   "best_iteration_trees": 67,
   "feature_importances": {
     "hour": 0.09870000183582306,
