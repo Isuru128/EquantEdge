@@ -128,6 +128,7 @@ def find_swing_pivots(
     """
     highs = df["high"].to_numpy(dtype=float)
     lows = df["low"].to_numpy(dtype=float)
+    times = df["datetime"].astype(str).to_numpy() if "datetime" in df.columns else None
     n = len(df)
     
     swing_highs = []
@@ -149,7 +150,7 @@ def find_swing_pivots(
             swing_highs.append({
                 "idx": i,
                 "price": float(highs[i]),
-                "datetime": str(df.iloc[i].get("datetime", "")),
+                "datetime": times[i] if times is not None else str(i),
             })
             
         # Swing Low
@@ -167,7 +168,7 @@ def find_swing_pivots(
             swing_lows.append({
                 "idx": i,
                 "price": float(lows[i]),
-                "datetime": str(df.iloc[i].get("datetime", "")),
+                "datetime": times[i] if times is not None else str(i),
             })
             
     return swing_highs, swing_lows
