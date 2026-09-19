@@ -61,7 +61,7 @@ EURUSD_MIN_CONFIDENCE   = 0.58      # Stricter ML threshold for EURUSD (>= 58%)
 EURUSD_MIN_SL_PIPS      = 5.0       # Minimum 5.0 pips SL for EURUSD
 
 ML_MODEL_PATH           = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "xgb_strategy_model.pkl")
-ML_CONFIDENCE_THRESHOLD = 0.55
+ML_CONFIDENCE_THRESHOLD = 0.58
 USE_ML_FILTER           = True
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -213,7 +213,13 @@ def generate_signals(
     if not all_fvgs:
         return df_out
 
+    import bisect
+    chrono_fvgs = all_fvgs[::-1]
+    chrono_times = [str(f.get("datetime", "")) for f in chrono_fvgs]
+
     datetimes = df_1m["datetime"].astype(str).values if "datetime" in df_1m.columns else None
+    high_arr = df_1m["high"].to_numpy(dtype=float)
+    low_arr = df_1m["low"].to_numpy(dtype=float)
 
     lookback = 15
     cooldown_until = 0
@@ -235,17 +241,28 @@ def generate_signals(
 
         bar_time = datetimes[i] if datetimes is not None else None
 
-        # Check active FVGs matching the current bar timestamp
-        active_fvgs = [
-            f for f in all_fvgs
-            if not (bar_time and f.get("datetime") and f["datetime"] >= bar_time)
-        ]
+        # Fast O(log M) lookup of active FVGs formed before current bar
+        if bar_time:
+            f_idx = bisect.bisect_left(chrono_times, bar_time)
+            if f_idx == 0:
+                continue
+            active_fvgs = chrono_fvgs[max(0, f_idx - 6) : f_idx][::-1]
+        else:
+            active_fvgs = all_fvgs[:6]
+
         if not active_fvgs:
             continue
 
-        sub_df = df_1m.iloc[: i + 1]
+        w_start = max(0, i + 1 - 60)
+        win_high = float(np.max(high_arr[w_start : i + 1]))
+        win_low = float(np.min(low_arr[w_start : i + 1]))
+        sub_df = df_1m.iloc[w_start : i + 1]
 
-        for fvg in active_fvgs[:6]:
+        for fvg in active_fvgs:
+            # Rapid rejection: if price window never touched FVG zone, skip
+            if win_high < fvg["bottom"] or win_low > fvg["top"]:
+                continue
+
             side = fvg["direction"]
 
             mss = detect_market_structure_shift(
@@ -295,8 +312,8 @@ def get_latest_signal(
     rr_ratio: float = RR_RATIO,
     pip_size: float | None = None,
     min_sl_pips: float = MIN_SL_PIPS,
-    use_ml: bool = False,
-    confidence_threshold: float = 0.50,
+    use_ml: bool = USE_ML_FILTER,
+    confidence_threshold: float = ML_CONFIDENCE_THRESHOLD,
 ) -> dict:
     """
     Evaluate the most recently closed 1-minute candle for a confirmed basic 15M FVG + 1M MSS setup.
@@ -379,6 +396,36 @@ def get_latest_signal(
 
             dir_name = "BUY" if sig == 1 else "SELL"
             result["label"] = f"{dir_name} MSS RETEST (15M FVG + 1M Pivot | 1:{rr_ratio:.1f} RR)"
+
+            # ML Probability Meta-Labeling Filter
+            if use_ml:
+                model = get_ml_model()
+                if model is not None:
+                    try:
+                        from src.ml_features import extract_features_for_signal, FEATURE_COLUMNS
+                        feats = extract_features_for_signal(
+                            df=df,
+                            idx=len(df) - 2,
+                            signal_side=sig,
+                            pip_size=pip_size,
+                            fvg={"top": result["fvg_top"], "bottom": result["fvg_bottom"]},
+                            peak_high=result["sl_price"] if sig == -1 else None,
+                            valley_low=result["sl_price"] if sig == 1 else None,
+                        )
+                        feat_df = pd.DataFrame([feats])[FEATURE_COLUMNS].fillna(0.0)
+                        prob = float(model.predict_proba(feat_df)[0, 1])
+                        result["xgb_prob"] = round(prob, 4)
+
+                        req_thresh = confidence_threshold
+                        if symbol and "EURUSD" in str(symbol).upper():
+                            req_thresh = max(req_thresh, EURUSD_MIN_CONFIDENCE)
+
+                        if prob < req_thresh:
+                            result["ml_filtered"] = True
+                            result["signal"] = 0
+                            result["label"] = f"FILTERED BY ML (p={prob:.1%} < {req_thresh:.1%})"
+                    except Exception:
+                        pass
             break
 
     return result
