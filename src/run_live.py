@@ -8,7 +8,7 @@ Timeframe: 15-Minute HTF Trend & FVG + 1-Minute LTF Market Structure Shift.
 Session Restriction: Trades BLOCKED between 14:00 - 20:00 New York time (UTC-4 / UTC-5).
 News Protection: Automatically BLOCKS trade entry 30m before & 30m after High-Impact news releases via Forex Factory API.
 Risk: 1.0% per trade (fixed 1:2.0 RR, 50% partial scale-out at +1.0R, trailing SL to breakeven).
-ML Filter: XGBoost Meta-Labeling Classifier (p >= 0.55).
+ML Filter: XGBoost Meta-Labeling Classifier (p >= 0.58).
 """
 
 import time
